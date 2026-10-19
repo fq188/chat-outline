@@ -1,0 +1,13 @@
+{
+  "name": "chat-outline-dev",
+  "private": true,
+  "description": "Chat Outline 的本地测试脚手架（与扩展运行无关）",
+  "scripts": {
+    "test": "node test-all.js",
+    "test:layout": "node test-narrow.js",
+    "test:e2e": "node e2e.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}

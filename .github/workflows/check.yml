@@ -1,0 +1,40 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 校验 manifest.json
+        run: |
+          node -e '
+          const fs = require("fs");
+          const m = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+          if (m.manifest_version !== 3) throw new Error("必须是 Manifest V3");
+          if (!m.content_scripts || !m.content_scripts.length) throw new Error("缺少 content_scripts");
+          const matches = m.content_scripts[0].matches || [];
+          const re = /^https:\/\/[a-z0-9.*-]+\/[^\s]*$/;
+          const bad = matches.filter((p) => !re.test(p));
+          if (bad.length) throw new Error("非法 match 模式: " + bad.join(", "));
+          for (const f of m.content_scripts[0].js.concat(m.background.service_worker)) {
+            if (!fs.existsSync(f)) throw new Error("清单引用了不存在的文件: " + f);
+          }
+          console.log(`manifest OK — ${matches.length} 个站点`);
+          '
+
+      - name: 语法检查
+        run: |
+          for f in content.js background.js; do
+            node --check "$f"
+            echo "$f OK"
+          done

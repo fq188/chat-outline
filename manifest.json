@@ -1,0 +1,101 @@
+{
+  "manifest_version": 3,
+  "name": "对话目录 · Chat Outline",
+  "version": "1.1.0",
+  "description": "给 ChatGPT / Gemini / Claude / Copilot / DeepSeek / Kimi / 豆包 / 元宝 / 通义 等 62 个 AI 对话网站加悬浮目录：一键跳转任意历史提问，支持搜索、滚动跟随与导出 Markdown。",
+  "homepage_url": "https://github.com/fq188/chat-outline",
+  "permissions": [
+    "storage"
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "对话目录：显示 / 隐藏（Alt+Q）",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://aistudio.google.com/*",
+        "https://notebooklm.google.com/*",
+        "https://claude.ai/*",
+        "https://copilot.microsoft.com/*",
+        "https://grok.com/*",
+        "https://chat.deepseek.com/*",
+        "https://chat.qwen.ai/*",
+        "https://qwen.ai/*",
+        "https://kimi.com/*",
+        "https://www.kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://doubao.com/*",
+        "https://www.doubao.com/*",
+        "https://yuanbao.tencent.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://www.tongyi.com/*",
+        "https://qianwen.com/*",
+        "https://yiyan.baidu.com/*",
+        "https://chatglm.cn/*",
+        "https://www.chatglm.cn/*",
+        "https://chatglm.com/*",
+        "https://xinghuo.xfyun.cn/*",
+        "https://tiangong.cn/*",
+        "https://www.tiangong.cn/*",
+        "https://metaso.cn/*",
+        "https://www.metaso.cn/*",
+        "https://hailuoai.com/*",
+        "https://yuewen.cn/*",
+        "https://n.cn/*",
+        "https://ima.qq.com/*",
+        "https://www.baichuan-ai.com/*",
+        "https://perplexity.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://poe.com/*",
+        "https://chat.mistral.ai/*",
+        "https://huggingface.co/chat/*",
+        "https://lmarena.ai/*",
+        "https://chat.lmsys.org/*",
+        "https://meta.ai/*",
+        "https://www.meta.ai/*",
+        "https://t3.chat/*",
+        "https://openrouter.ai/chat*",
+        "https://phind.com/*",
+        "https://www.phind.com/*",
+        "https://you.com/*",
+        "https://pi.ai/*",
+        "https://duck.ai/*",
+        "https://kagi.com/assistant*",
+        "https://genspark.ai/*",
+        "https://www.genspark.ai/*",
+        "https://elicit.com/*",
+        "https://typeset.io/*",
+        "https://scispace.com/*",
+        "https://consensus.app/*",
+        "https://www.chatpdf.com/*",
+        "https://www.blackbox.ai/*",
+        "https://chat.forefront.ai/*",
+        "https://iask.ai/*",
+        "https://felo.ai/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

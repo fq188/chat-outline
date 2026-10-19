@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>通用站测试 · 只有「编辑」按钮</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f6f8; color: #222; font-size: 15px; }
+  .thread { max-width: 760px; margin: 0 auto; padding: 30px 20px 60vh; }
+  .line { margin: 18px 0; display: flex; flex-direction: column; }
+  .line.right { align-items: flex-end; }
+  .bubble { padding: 10px 14px; border-radius: 10px; background: #fff; max-width: 78%; line-height: 1.7; }
+  .line.right .bubble { background: #d9f2e6; }
+  .tools { font-size: 12px; color: #999; }
+  .tools button { border: 0; background: none; color: #999; font-size: 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="thread">
+  <div class="line right">
+    <div class="bubble">XRD 里 2θ=14.4° 那个峰对应的层间距怎么算？</div>
+    <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
+  </div>
+  <div class="line">
+    <div class="bubble">用布拉格方程 2d sinθ = nλ，λ=1.5406 Å，n=1，θ=7.2°，算出来 d≈6.15 Å，对应 MoS2 的 (002) 面。</div>
+    <div class="tools"><button>复制</button></div>
+  </div>
+
+  <div class="line right">
+    <div class="bubble">那如果样品里混了 Au 纳米颗粒，会不会影响这个峰的位置？</div>
+    <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
+  </div>
+  <div class="line">
+    <div class="bubble">Au 的 (111) 峰在 38.2° 附近，和 (002) 不重叠；但会抬高背底，建议做背底扣除。</div>
+    <div class="tools"><button>复制</button></div>
+  </div>
+
+  <div class="line right">
+    <div class="bubble">B107 的拉曼数据我导出成 txt 了，怎么批量算峰位和半高宽？</div>
+    <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
+  </div>
+  <div class="line">
+    <div class="bubble">可以用 Python 的 scipy.signal.find_peaks + curve_fit 做洛伦兹拟合，批量遍历文件夹即可。</div>
+    <div class="tools"><button>复制</button></div>
+  </div>
+
+  <div class="line right">
+    <div class="bubble">最后帮我把四组数据的 E2g 和 A1g 峰位差整理成表格。</div>
+    <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
+  </div>
+  <div class="line">
+    <div class="bubble">| 组别 | E2g (cm⁻¹) | A1g (cm⁻¹) | Δ (cm⁻¹) |</div>
+    <div class="tools"><button>复制</button></div>
+  </div>
+</div>
+</body>
+</html>
