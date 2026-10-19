@@ -12,3 +12,4 @@ dev/shots/
 .DS_Store
 Thumbs.db
 desktop.ini
+_dist/
