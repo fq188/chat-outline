@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.1)
+ * 对话目录 · Chat Outline  (v1.2)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -193,7 +193,7 @@
   }
 
   function validateSet(nodes, role) {
-    if (!nodes || !nodes.length || nodes.length > 400) return false;
+    if (!nodes || !nodes.length || nodes.length > 1000) return false;
     const visible = nodes.filter(isVisible);
     if (!visible.length) return false;
     const texts = visible.map((n) => (n.innerText || '').trim()).filter(Boolean);
@@ -280,15 +280,19 @@
   }
 
   function isDarkPage() {
-    try {
-      const bg = getComputedStyle(document.body).backgroundColor || '';
-      const m = bg.match(/\d+(\.\d+)?/g);
-      if (m && m.length >= 3) {
-        const [r, g, b] = m.map(Number);
-        return 0.299 * r + 0.587 * g + 0.114 * b < 128;
+    // 有的站点背景设在 body，有的设在 html（或 color-scheme），两层都看
+    for (const el of [document.body, document.documentElement]) {
+      try {
+        if (!el) continue;
+        const bg = getComputedStyle(el).backgroundColor || '';
+        const m = bg.match(/\d+(\.\d+)?/g);
+        if (m && m.length >= 3 && !/rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)/.test(bg)) {
+          const [r, g, b] = m.map(Number);
+          return 0.299 * r + 0.587 * g + 0.114 * b < 128;
+        }
+      } catch (e) {
+        /* ignore */
       }
-    } catch (e) {
-      /* ignore */
     }
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
@@ -307,7 +311,15 @@
     }
   }
 
+  // 启发式很贵（逐按钮检查 + 向上爬父链），按「按钮总数」做戳记缓存；
+  // 按钮数没变且缓存节点还挂在 DOM 上，就直接复用上次结果
+  let editMemo = { stamp: -1, anchors: [] };
+
   function detectByEditButton() {
+    const stamp = document.querySelectorAll('button, [role="button"]').length;
+    if (editMemo.stamp === stamp && editMemo.anchors.every((a) => a.isConnected)) {
+      return editMemo.anchors;
+    }
     const btns = document.querySelectorAll('button, [role="button"], [aria-label], [title]');
     const found = [];
     let guard = 0;
@@ -342,16 +354,22 @@
       }
     }
     const uniq = dropNested(found);
+    editMemo = { stamp, anchors: uniq };
     return uniq.length ? uniq : [];
   }
 
   /* ======================= 5. 识别方案（plan） ======================= */
   let plan = null;
   let planSig = '';
+  // DOM 纪元：每次 MutationObserver 触发 +1。「三级探测全部落空」是很贵的操作，
+  // 用纪元号缓存空结果 —— DOM 没变的期间不再重复探测（无对话页面收益最大）
+  let domEpoch = 0;
+  let nullEpoch = -1;
 
   function buildPlan(force) {
     const sig = location.href + '|' + (overrides.user || '') + '|' + (overrides.assistant || '');
     if (!force && plan && planSig === sig) return plan;
+    if (!force && !plan && nullEpoch === domEpoch && planSig === sig) return null;
     planSig = sig;
 
     // ① 用户手动指定的选择器优先级最高
@@ -408,6 +426,7 @@
     }
 
     plan = null;
+    nullEpoch = domEpoch;
     return null;
   }
 
@@ -422,6 +441,7 @@
   let openedOnce = false;
   let prefCollapsed = null;
   let lastSignature = '';
+  let lastCheapSig = '';
 
   /* ======================= 7. 样式 ======================= */
   const CSS = `
@@ -575,6 +595,7 @@
     padding: 6px 10px; border-radius: 8px; opacity: 0; transition: opacity .2s;
     pointer-events: none;
   }
+  .app[data-side="left"] .toast { right: auto; left: 24px; }
   .toast.show { opacity: 1; }
   `;
 
@@ -647,6 +668,15 @@
   }
 
   /* ======================= 9. 扫描 ======================= */
+  // 廉价签名：只数节点和文本长度（textContent 不触发排版）。
+  // 没变就跳过后面整套「getBoundingClientRect 可见性测量 + 克隆清洗 + 排序渲染」，
+  // 流式输出期间 MutationObserver 触发很频繁，这层能挡掉绝大多数无效扫描。
+  function cheapSigOf(nodes) {
+    let len = 0;
+    for (let i = 0; i < nodes.length; i++) len += (nodes[i].textContent || '').length;
+    return nodes.length + ':' + len;
+  }
+
   function collectNodes(nodes, role, siteCfg) {
     const clean = dropNested(nodes.filter(isVisible));
     const container = (siteCfg && siteCfg.container) || null;
@@ -667,6 +697,7 @@
     if (!p) {
       items = [];
       lastSignature = '';
+      lastCheapSig = '';
       app.dataset.has = '0';
       $count.textContent = '0';
       render();
@@ -675,9 +706,15 @@
 
     $auto.hidden = p.mode !== 'auto';
 
+    const userNodes = p.getUser();
+    const asstNodes = p.getAssistant ? p.getAssistant() : [];
+    const cs = cheapSigOf(userNodes) + '|' + cheapSigOf(asstNodes);
+    if (!forceDetect && cs === lastCheapSig) return items;
+    lastCheapSig = cs;
+
     let all = [
-      ...collectNodes(p.getUser(), 'user', p.site),
-      ...(p.getAssistant ? collectNodes(p.getAssistant(), 'assistant', p.site) : [])
+      ...collectNodes(userNodes, 'user', p.site),
+      ...collectNodes(asstNodes, 'assistant', p.site)
     ];
 
     // 同一容器只保留一次
@@ -704,10 +741,14 @@
         `${it.role}-${i}-${it.text.slice(0, 12)}`;
     });
 
-    const sig = all
-      .filter((i) => i.role === 'user')
-      .map((i) => i.key + '|' + i.text.slice(0, 40))
-      .join('~');
+    // 签名里只在「答」打开时纳入回答长度 —— 这样流式回答时列表能跟着更新；
+    // 没开「答」时不纳入，避免回答增长引起无谓的列表重建
+    const sig =
+      all
+        .filter((i) => i.role === 'user')
+        .map((i) => i.key + '|' + i.text.slice(0, 40))
+        .join('~') +
+      (showAssistant ? '|A' + all.filter((i) => i.role === 'assistant').map((i) => i.raw.length).join(',') : '');
 
     items = all;
     app.dataset.has = items.some((i) => i.role === 'user') ? '1' : '0';
@@ -782,7 +823,7 @@
       transition: el.style.transition
     };
     el.style.transition = 'outline-color .25s ease';
-    el.style.outline = '2px solid #10a37f';
+    el.style.outline = '2px solid ' + (app.dataset.theme === 'dark' ? '#2ec08f' : '#10a37f');
     el.style.outlineOffset = '6px';
     el.style.borderRadius = '10px';
     setTimeout(() => {
@@ -906,6 +947,7 @@
       if (act === 'close') setOpen(false);
       if (act === 'refresh') {
         lastSignature = '';
+        lastCheapSig = '';
         scan(true);
         render();
         toast(`已重新扫描：${items.filter((i) => i.role === 'user').length} 个提问`);
@@ -1013,8 +1055,17 @@
   };
 
   /* ======================= 15. 启动 ======================= */
-  const scheduleScan = debounce(() => scan(false), 400);
-  const mo = new MutationObserver(scheduleScan);
+  // 后台标签页不扫描（MutationObserver 照触但直接丢弃），回前台时补一次
+  const scheduleScan = debounce(() => {
+    if (!document.hidden) scan(false);
+  }, 400);
+  const mo = new MutationObserver(() => {
+    domEpoch += 1;
+    scheduleScan();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) scheduleScan();
+  });
 
   function boot() {
     mount();
@@ -1051,23 +1102,43 @@
       mo.observe(document.documentElement, { childList: true, subtree: true });
     });
 
+    // SPA 路由切换：包裹 history API + popstate/hashchange 做即时感知，
+    // 1s 轮询只当兜底（个别框架直接改 location 不走这些钩子）
     let lastHref = location.href;
-    setInterval(() => {
-      if (location.href !== lastHref) {
-        lastHref = location.href;
-        items = [];
-        activeKey = null;
-        lastSignature = '';
-        plan = null;
-        planSig = '';
-        query = '';
-        $input.value = '';
-        setTimeout(() => {
-          scan(true);
-          render();
-        }, 700);
-      }
-    }, 1000);
+    function handleNav() {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      items = [];
+      activeKey = null;
+      lastSignature = '';
+      lastCheapSig = '';
+      plan = null;
+      planSig = '';
+      nullEpoch = -1;
+      editMemo = { stamp: -1, anchors: [] };
+      query = '';
+      $input.value = '';
+      setTimeout(() => {
+        scan(true);
+        render();
+      }, 700);
+    }
+    setInterval(handleNav, 1000);
+    try {
+      const fire = () => setTimeout(handleNav, 50);
+      ['pushState', 'replaceState'].forEach((m) => {
+        const orig = history[m];
+        history[m] = function (...args) {
+          const r = orig.apply(this, args);
+          fire();
+          return r;
+        };
+      });
+      window.addEventListener('popstate', fire);
+      window.addEventListener('hashchange', fire);
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   if (document.readyState === 'loading') {
