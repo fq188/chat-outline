@@ -1,5 +1,10 @@
 # 对话目录 · Chat Outline
 
+[![check](https://github.com/fq188/chat-outline/actions/workflows/check.yml/badge.svg)](https://github.com/fq188/chat-outline/actions/workflows/check.yml)
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue)
+![sites](https://img.shields.io/badge/sites-62-brightgreen)
+![license](https://img.shields.io/badge/license-MIT-orange)
+
 > 给 AI 对话网页加一个悬浮目录：随时看到这次对话里问过的每一个问题，点一下跳过去并高亮。
 
 在长对话里翻找"那个关于单位换算的问题到底在哪"是最浪费时间的事。这个扩展把整段对话变成一份可点击的目录 —— 像 PDF 的书签，或代码编辑器的大纲。
