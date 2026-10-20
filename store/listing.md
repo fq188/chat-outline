@@ -2,6 +2,19 @@
 
 > Partner Center 提交页面逐项对应。包文件：`_dist/chat-outline-v1.2.0.zip`
 
+## 提交记录
+
+| 项目 | 值 |
+| --- | --- |
+| 提交时间 | 2026-10-20 |
+| 状态 | 正在审阅（官方预计 7 个工作日） |
+| 产品 ID | `3f0f4414-be01-4c31-8fb5-8b555a4bc55b` |
+| Microsoft Store ID | `0RDCKDGR9FP7` |
+| CRX ID | `khaaohojjiococjbikeeiopklokhbjka` |
+| 已提交语言 | 英语(美国)，状态「已完成」 |
+| 认证说明 | 537 字符，测试人员无需凭据 |
+| 商店链接 | 审核通过后可用（形如 `https://microsoftedge.microsoft.com/addons/detail/0RDCKDGR9FP7`） |
+
 ## 基本信息
 
 | 项目 | 值 |
