@@ -1,13 +1,18 @@
 # Edge Add-ons 上架材料（复制粘贴用）
 
-> Partner Center 提交页面逐项对应。包文件：`_dist/chat-outline-v1.2.0.zip`
+> Partner Center 提交页面逐项对应。当前包文件：`_dist/chat-outline-v1.2.1.zip`
 
 ## 提交记录
 
+| 版本 | 包文件 | 提交时间 | 状态 |
+| --- | --- | --- | --- |
+| 1.2.0 | `chat-outline-v1.2.0.zip` | 2026-10-20 | 正在审阅（官方预计 7 个工作日） |
+| 1.2.1 | `chat-outline-v1.2.1.zip` | 2026-10-24 | 待提交（本次为 1.2.0 的更新提交） |
+
+### 账号与标识
+
 | 项目 | 值 |
 | --- | --- |
-| 提交时间 | 2026-10-20 |
-| 状态 | 正在审阅（官方预计 7 个工作日） |
 | 产品 ID | `3f0f4414-be01-4c31-8fb5-8b555a4bc55b` |
 | Microsoft Store ID | `0RDCKDGR9FP7` |
 | CRX ID | `khaaohojjiococjbikeeiopklokhbjka` |
@@ -19,7 +24,7 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 扩展包 | `_dist/chat-outline-v1.2.0.zip`（zip 根目录含 manifest.json） |
+| 扩展包 | `_dist/chat-outline-v1.2.1.zip`（zip 根目录含 manifest.json） |
 | 扩展名称 | 对话目录 · Chat Outline（取自 manifest，无需手填） |
 | 简短描述 | 取自 manifest description，无需手填 |
 | 类别（Category） | 生产力 / Productivity |
@@ -39,10 +44,11 @@
 • 提问清单：按 1、2、3… 列出本次对话的全部提问，各显示前两行
 • 点击跳转：平滑滚动到对应消息，并用描边高亮，一眼定位
 • 滚动跟随：你在页面上滚到哪里，目录就自动高亮哪一问
-• 搜索过滤：输入关键词即时筛选，回车直接跳到第一条命中
+• 搜索过滤：输入关键词即时筛选并高亮命中词，回车直接跳到第一条命中
 • AI 回答：可选把回答条目（含时间戳）也列入目录
 • 导出 Markdown：一键把整段问答导出为 .md 文件，方便存档、写周报、贴进笔记
 • 深浅色自适应：跟随页面主题，面板不刺眼
+• 键盘可用：Tab 聚焦条目，Enter / 空格跳转
 • 快捷键：Alt+Q 显示 / 收起；收起后是屏幕边缘一个小标签，不占地方
 
 识别能力：内置 ChatGPT、Gemini、Claude 等常用站点的精确适配；对未适配的站点，会自动尝试 30 多种通用标记和「编辑按钮」结构启发式识别；仍不准时可在面板底部手动填写 CSS 选择器（按域名记忆）。
@@ -58,10 +64,11 @@ Hunting for "that one question" in a long conversation is the biggest time sink.
 • Question list: every prompt you sent, numbered 1, 2, 3…, two lines each
 • Click to jump: smooth-scrolls to the message and highlights it
 • Scroll-spy: the outline follows your reading position automatically
-• Search: instant filtering; press Enter to jump to the first match
+• Search: instant filtering with match highlighting; press Enter to jump to the first match
 • AI answers: optionally include assistant replies with timestamps
 • Markdown export: save the whole Q&A thread as a .md file for notes or reports
-• Auto dark/light theme; Alt+Q toggles the panel; collapses to a slim edge tab
+• Auto dark/light theme; keyboard accessible — Tab to an entry, Enter or Space to jump
+• Alt+Q toggles the panel; collapses to a slim edge tab
 
 Detection: precise adapters for major sites, plus 30+ universal patterns and a structural heuristic anchored on the "edit" button, so even unsupported sites usually work. If detection misses, you can enter a custom CSS selector in the panel (remembered per domain).
 
@@ -71,13 +78,37 @@ Privacy: 100% local — no network requests, no data collection. Open source: ht
 
 本扩展无需账号、无付费功能、无后端服务。测试方法：打开 https://chatgpt.com （或 manifest.json 中 matches 列出的任一站点）并进行任意对话，页面右侧会出现「目录」悬浮标签，点击或按 Alt+Q 打开面板，即可看到提问列表；点击条目跳转，点 ⤓ 导出 Markdown。扩展仅申请 storage 权限，用于保存界面偏好；content script 只在 manifest 列出的对话站点注入，不修改页面内容、不读取账号数据。全部识别在本地完成，无网络请求。
 
+## 本次更新内容（Release notes，v1.2.1）
+
+> Partner Center 更新提交页的「此版本的新增内容」字段，按语言分别填写。
+
+**中文（zh-CN）**
+
+修复两处问题：同一条消息重复跳转、或跳到另一条时，绿色描边可能残留不消失，现在任意时刻只有一圈高亮；下载被浏览器拦截且环境不支持剪贴板时，导出会抛出未捕获异常，现在只做提示，有剪贴板时自动改为复制。体验上，搜索命中的关键词会在目录里高亮（大小写不敏感），目录条目可以用 Tab 聚焦、Enter 或空格跳转，图标按钮与搜索框补齐了无障碍标签。
+
+**English (en-US)**
+
+Two fixes: the green highlight ring could linger after repeated jumps to the same message or when jumping elsewhere — exactly one ring is now shown at a time; and export threw an uncaught error when downloads were blocked and no clipboard was available — it now shows a notice and falls back to copying when possible. Also: search matches are highlighted in the outline (case-insensitive), entries can be focused with Tab and jumped to with Enter or Space, and icon buttons plus the search box now carry accessibility labels.
+
 ## 上架步骤（Partner Center）
 
+### 版本更新（v1.2.0 → v1.2.1）
+
+1. 用注册扩展的 Microsoft 账号登录 https://partner.microsoft.com/dashboard/microsoftedge/overview
+2. 在扩展列表点「对话目录 · Chat Outline」→「更新」→「包」页上传 `_dist/chat-outline-v1.2.1.zip`
+3. 「商店一览」页把上面「本次更新内容」分别填进中文 / 英文语言条目
+4. 确认「属性」「可用性」不变，点「发布」提交审核
+5. 提交后 `manifest.version` 必须大于线上版本（1.2.1 > 1.2.0，已满足）
+
+> 若旧版本仍在审核中，提交新版本会取代排队中的提交；以最后一次发布的提交为准。
+
+### 首次上架（已完成，留档）
+
 1. 用 Microsoft 账号登录 https://partner.microsoft.com/dashboard/microsoftedge/overview （个人开发者免费注册）
-2. 「创建新扩展」→ 上传 `_dist/chat-outline-v1.2.0.zip`
+2. 「创建新扩展」→ 上传 zip
 3. 「属性」页：类别选 Productivity，隐私政策填上面的 URL，成人内容选「否」
 4. 「语言/详细信息」页：按上面文案填中文（可加英文），上传 Logo 和截图
 5. 「可用性」页：默认公开发行即可
 6. 提交审核，一般 1–7 个工作日出结果，状态会发到注册邮箱
 
-> 首次上架必须在网页上操作；上架成功后在「发布 API」页创建凭据，以后更新版本可用 REST API 自动提交。
+> 网页端提交完成后，可在「发布 API」页创建凭据，以后更新版本可用 REST API 自动提交。
