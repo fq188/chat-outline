@@ -5,7 +5,7 @@
 <title>通用站测试 · 只有「编辑」按钮</title>
 <style>
   body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f6f8; color: #222; font-size: 15px; }
-  .thread { max-width: 760px; margin: 0 auto; padding: 30px 20px 60vh; }
+  .thread { max-width: 760px; margin: 0 350px 0 auto; padding: 30px 20px 60vh; }
   .line { margin: 18px 0; display: flex; flex-direction: column; }
   .line.right { align-items: flex-end; }
   .bubble { padding: 10px 14px; border-radius: 10px; background: #fff; max-width: 78%; line-height: 1.7; }
@@ -17,40 +17,41 @@
 <body>
 <div class="thread">
   <div class="line right">
-    <div class="bubble">XRD 里 2θ=14.4° 那个峰对应的层间距怎么算？</div>
+    <div class="bubble">手冲咖啡总是偏酸，是不是水温太低了？</div>
     <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
   </div>
   <div class="line">
-    <div class="bubble">用布拉格方程 2d sinθ = nλ，λ=1.5406 Å，n=1，θ=7.2°，算出来 d≈6.15 Å，对应 MoS2 的 (002) 面。</div>
+    <div class="bubble">酸味重通常是萃取不足。先看水温：浅烘豆建议 92-93℃，中深烘 88-90℃。如果水温没问题，再调细研磨度，每次只改一个变量。</div>
     <div class="tools"><button>复制</button></div>
   </div>
 
   <div class="line right">
-    <div class="bubble">那如果样品里混了 Au 纳米颗粒，会不会影响这个峰的位置？</div>
+    <div class="bubble">我用的 1:15 粉水比，20g 粉配 300g 水，两分半左右流完，这样正常吗？</div>
     <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
   </div>
   <div class="line">
-    <div class="bubble">Au 的 (111) 峰在 38.2° 附近，和 (002) 不重叠；但会抬高背底，建议做背底扣除。</div>
+    <div class="bubble">1:15 属于偏浓的日常比例，两分半的总时长也合理。想更清爽可以拉到 1:16，风味层次会更明显一些。</div>
     <div class="tools"><button>复制</button></div>
   </div>
 
   <div class="line right">
-    <div class="bubble">B107 的拉曼数据我导出成 txt 了，怎么批量算峰位和半高宽？</div>
+    <div class="bubble">闷蒸要注多少水、等多久？我看有人等 30 秒有人等 45 秒。</div>
     <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
   </div>
   <div class="line">
-    <div class="bubble">可以用 Python 的 scipy.signal.find_peaks + curve_fit 做洛伦兹拟合，批量遍历文件夹即可。</div>
+    <div class="bubble">闷蒸水量取粉重的 2 倍左右，20g 粉注 40g 水；时间 30-45 秒都行，只要粉层完全膨胀、不再冒大泡就可以继续注水。</div>
     <div class="tools"><button>复制</button></div>
   </div>
 
   <div class="line right">
-    <div class="bubble">最后帮我把四组数据的 E2g 和 A1g 峰位差整理成表格。</div>
+    <div class="bubble">最后帮我整理一张三家常见浅烘豆的参数表，我想对比着试。</div>
     <div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>
   </div>
   <div class="line">
-    <div class="bubble">| 组别 | E2g (cm⁻¹) | A1g (cm⁻¹) | Δ (cm⁻¹) |</div>
+    <div class="bubble">| 豆子 | 水温 | 研磨 | 比例 | 总时长 |</div>
     <div class="tools"><button>复制</button></div>
   </div>
+
 </div>
 </body>
 </html>

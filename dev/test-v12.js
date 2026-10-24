@@ -49,7 +49,7 @@ async function openMock(browser, url, mockFile) {
   {
     const { page, errors } = await openMock(browser, 'https://chatgpt.com/c/v12', 'mock.html');
     const c0 = await page.evaluate(() => +document.getElementById('chat-outline-host').shadowRoot.querySelector('.count').textContent);
-    check('初始识别 5 个提问', c0 === 5, c0);
+    check('初始识别 6 个提问', c0 === 6, c0);
 
     // 1. 追加一条新提问（模拟继续对话）
     await page.evaluate(() => {
@@ -58,20 +58,20 @@ async function openMock(browser, url, mockFile) {
       art.setAttribute('data-testid', 'conversation-turn-11');
       art.innerHTML =
         '<div class="user"><div data-message-author-role="user" class="msg">' +
-        '<div>新增问题：MoS2 峰位随层数怎么移动？</div>' +
+        '<div>新增问题：京都的巴士一日券在哪里买？</div>' +
         '<div class="actions"><button>编辑</button><button>复制</button></div></div></div>';
       document.querySelector('.main').appendChild(art);
     });
     await page.waitForTimeout(900);
     const c1 = await page.evaluate(() => +document.getElementById('chat-outline-host').shadowRoot.querySelector('.count').textContent);
-    check('新增提问后目录更新为 6', c1 === 6, c1);
+    check('新增提问后目录更新为 7', c1 === 7, c1);
 
     // 2. 开「答」，再让最后一条回答原地变长（模拟流式输出）
     await page.evaluate(() => document.getElementById('chat-outline-host').shadowRoot.querySelector('[data-act="asst"]').click());
     await page.waitForTimeout(300);
     await page.evaluate(() => {
       const last = [...document.querySelectorAll('[data-message-author-role="assistant"]')].pop();
-      last.querySelector('div').textContent += '（流式追加：E2g 随层数增加红移。）';
+      last.querySelector('div').textContent += '（流式追加：雨天可以把岚山换成天龙寺室内行程。）';
     });
     await page.waitForTimeout(900);
     const asstUpdated = await page.evaluate(() => {
@@ -87,7 +87,7 @@ async function openMock(browser, url, mockFile) {
       count: +document.getElementById('chat-outline-host').shadowRoot.querySelector('.count').textContent,
       mounted: !!document.getElementById('chat-outline-host')
     }));
-    check('pushState 后面板仍正常', afterNav.mounted && afterNav.count === 6, JSON.stringify(afterNav));
+    check('pushState 后面板仍正常', afterNav.mounted && afterNav.count === 7, JSON.stringify(afterNav));
 
     check('无页面错误', errors.length === 0, errors.join('; ') || '无');
     await page.close();
@@ -102,7 +102,7 @@ async function openMock(browser, url, mockFile) {
       const line = document.createElement('div');
       line.className = 'line right';
       line.innerHTML =
-        '<div class="bubble">追加提问：半高宽和峰位拟合用什么函数？</div>' +
+        '<div class="bubble">追加提问：闷蒸时间长短对甜感影响大吗？</div>' +
         '<div class="tools"><button>复制</button><button aria-label="编辑">编辑</button></div>';
       document.querySelector('.thread').appendChild(line);
     });

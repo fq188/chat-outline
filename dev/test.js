@@ -80,12 +80,12 @@ const log = (...a) => console.log(...a);
   await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
     const inp = sr.querySelector('.search input');
-    inp.value = 'Excel';
+    inp.value = '下雨';
     inp.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.waitForTimeout(300);
   const s4 = await snap();
-  log('4) 搜索 "Excel" count =', s4.count, ' 命中 =', s4.items.length, s4.items.join(' / '));
+  log('4) 搜索 "下雨" count =', s4.count, ' 命中 =', s4.items.length, s4.items.join(' / '));
   await page.screenshot({ path: path.join(SHOTS, '04-search.png') });
 
   // 导出

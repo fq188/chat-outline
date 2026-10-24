@@ -61,7 +61,7 @@ async function openMock(browser, url, mockFile) {
     await page.evaluate(() => {
       const sr = document.getElementById('chat-outline-host').shadowRoot;
       const input = sr.querySelector('.search input');
-      input.value = '拉曼';
+      input.value = '下雨';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await page.waitForTimeout(600);
