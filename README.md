@@ -24,7 +24,7 @@
 - **提问清单** —— 把整段对话里的提问按 1、2、3… 列出来，显示前两行
 - **点击跳转** —— 平滑滚动到对应消息，并闪一圈绿色描边，一眼定位
 - **滚动跟随** —— 你在页面上滚到哪儿，目录就高亮哪一问
-- **搜索过滤** —— 输入关键词，回车直接跳到第一条命中
+- **搜索过滤** —— 输入关键词即时筛选并高亮命中词，回车直接跳到第一条命中
 - **显示 AI 回答** —— 点「答」把回答条目（含时间戳）也列进来
 - **导出 Markdown** —— 把问答全文导出成 `.md`，方便存档、写周报、贴进笔记
 - **自动适配深浅色** —— 跟随页面主题，面板不刺眼
@@ -55,7 +55,8 @@
 | `Alt + Q` | 显示 / 收起目录（点工具栏图标也行） |
 | 点列表条目 | 跳转到该消息并高亮 |
 | 序号徽章 | 第 N 个提问；打开「答」后 AI 回答显示为 `答` |
-| 搜索框 | 支持中文/英文关键词，回车跳第一条 |
+| 搜索框 | 中文/英文关键词（大小写不敏感），命中词高亮，回车跳第一条 |
+| 键盘操作 | Tab 聚焦条目后 Enter / 空格跳转，与点击等效 |
 | 滚动页面 | 目录自动高亮当前阅读位置 |
 | `答` | 显示 / 隐藏 AI 回答条目 |
 | `⇄` | 面板换到屏幕另一侧 |
@@ -123,6 +124,23 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
 ## 更新日志 / Changelog
+
+### v1.2.1 — 高亮残留修复与键盘操作 / Highlight fixes & keyboard support
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 同一条消息连续跳转、或跳到另一条时，绿色描边可能残留不消失；现在复用最初样式并重置计时器，任意时刻只有一圈高亮 | Repeated jumps, or jumping to another message, could leave a stale green outline. The original styles are now reused and the timer reset, so exactly one highlight ring exists at a time |
+| 下载被禁且环境没有 `clipboard` 时，导出会抛未捕获异常；现在只 toast 提示，有剪贴板时自动改为复制 | Export used to throw an uncaught error when downloads were blocked and no `clipboard` existed. It now only shows a toast, and falls back to copying when the clipboard is available |
+
+**体验 / Experience**
+
+| 中文 | English |
+| --- | --- |
+| 搜索命中的关键词在目录里高亮显示，大小写不敏感 | Search matches are highlighted in the outline, case-insensitively |
+| 目录条目可用 Tab 聚焦，Enter / 空格即可跳转；图标按钮与搜索框补齐 `aria-label` | Entries can be focused with Tab and jumped to with Enter or Space; icon buttons and the search box now have `aria-label`s |
+| 搜索无结果时按回车会给出提示 | Pressing Enter with no match now shows a hint |
 
 ### v1.2.0 — 扫描性能与健壮性优化 / Faster, steadier scanning
 

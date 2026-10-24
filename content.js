@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2)
+ * 对话目录 · Chat Outline  (v1.2.1)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -542,6 +542,8 @@
     color: var(--fg);
   }
   .item:hover { background: var(--hover); }
+  .item:focus { outline: none; }
+  .item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .item.active { background: var(--active); }
   .item.active .idx { color: var(--accent); border-color: var(--accent); }
   .idx {
@@ -557,6 +559,7 @@
     overflow: hidden; word-break: break-word;
   }
   .item.asst .txt { color: var(--muted); font-size: 12px; }
+  .txt mark { background: var(--active); color: var(--accent); border-radius: 3px; padding: 0 1px; font-weight: 600; }
   .meta { color: var(--muted); font-size: 11px; margin-top: 1px; }
   .empty { padding: 22px 14px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.7; }
   .foot { border-top: 1px solid var(--line); flex: 0 0 auto; }
@@ -614,20 +617,20 @@
   app.dataset.side = 'right';
   app.dataset.has = '0';
   app.innerHTML = `
-    <button class="launcher" title="打开对话目录（Alt+Q）">目录</button>
+    <button class="launcher" title="打开对话目录（Alt+Q）" aria-label="打开对话目录（Alt+Q）">目录</button>
     <aside class="panel" role="complementary" aria-label="对话目录">
       <div class="head">
         <span class="title">对话目录</span>
         <span class="count">0</span>
         <span class="auto" hidden title="自动识别页面结构；若不准，请用底部「选择器设置」">自动</span>
         <span class="grow"></span>
-        <button class="iconbtn" data-act="asst" title="显示 / 隐藏 AI 回答" aria-pressed="false">答</button>
-        <button class="iconbtn" data-act="side" title="换到另一侧">⇄</button>
-        <button class="iconbtn" data-act="export" title="导出为 Markdown">⤓</button>
-        <button class="iconbtn" data-act="refresh" title="重新扫描">⟳</button>
-        <button class="iconbtn" data-act="close" title="收起（Alt+Q）">✕</button>
+        <button class="iconbtn" data-act="asst" title="显示 / 隐藏 AI 回答" aria-label="显示 / 隐藏 AI 回答" aria-pressed="false">答</button>
+        <button class="iconbtn" data-act="side" title="换到另一侧" aria-label="换到另一侧">⇄</button>
+        <button class="iconbtn" data-act="export" title="导出为 Markdown" aria-label="导出为 Markdown">⤓</button>
+        <button class="iconbtn" data-act="refresh" title="重新扫描" aria-label="重新扫描">⟳</button>
+        <button class="iconbtn" data-act="close" title="收起（Alt+Q）" aria-label="收起目录（Alt+Q）">✕</button>
       </div>
-      <div class="search"><input type="search" placeholder="搜索问题 / 回答…" /></div>
+      <div class="search"><input type="search" placeholder="搜索问题 / 回答…" aria-label="搜索问题 / 回答" /></div>
       <ul class="list"></ul>
       <div class="foot">
         <details class="adv">
@@ -777,6 +780,25 @@
     });
   }
 
+  // 在转义后的安全 HTML 里给命中关键词包 <mark>，大小写不敏感，保留原文
+  function highlightText(text, q) {
+    if (!q) return esc(text);
+    const lower = text.toLowerCase();
+    const ql = q.toLowerCase();
+    let out = '';
+    let i = 0;
+    for (;;) {
+      const at = lower.indexOf(ql, i);
+      if (at < 0) {
+        out += esc(text.slice(i));
+        break;
+      }
+      out += esc(text.slice(i, at)) + '<mark>' + esc(text.slice(at, at + q.length)) + '</mark>';
+      i = at + q.length;
+    }
+    return out;
+  }
+
   function render() {
     const list = visibleItems();
     const userTotal = items.filter((i) => i.role === 'user').length;
@@ -801,10 +823,10 @@
         const meta = [isUser ? '' : `回答 ${it.q}`, it.time].filter(Boolean).join(' · ');
         return `<li class="item${isUser ? ' user' : ' asst'}${it.key === activeKey ? ' active' : ''}" data-key="${esc(
           it.key
-        )}" title="${esc(it.text.slice(0, 300))}">
+        )}" title="${esc(it.text.slice(0, 300))}" tabindex="0" role="button">
           <span class="idx">${esc(idx)}</span>
           <span class="body">
-            <span class="txt">${esc(it.text)}</span>
+            <span class="txt">${highlightText(it.text, query)}</span>
             ${meta ? `<span class="meta">${esc(meta)}</span>` : ''}
           </span>
         </li>`;
@@ -815,23 +837,43 @@
   }
 
   /* ======================= 11. 跳转 ======================= */
+  // 同一元素反复跳转时复用最初样式 + 重置计时器，避免把「高亮态」当原始样式存回去；
+  // 跳到新消息时立即清掉上一条的高亮，屏幕上同时只有一圈描边。
+  const flashState = new WeakMap();
+  let currentFlash = null;
+
+  function restoreFlash(el) {
+    const st = flashState.get(el);
+    if (!st) return;
+    clearTimeout(st.timer);
+    el.style.outline = st.outline;
+    el.style.outlineOffset = st.offset;
+    el.style.borderRadius = st.radius;
+    el.style.transition = st.transition;
+    flashState.delete(el);
+    if (currentFlash === el) currentFlash = null;
+  }
+
   function flash(el) {
-    const prev = {
-      outline: el.style.outline,
-      offset: el.style.outlineOffset,
-      radius: el.style.borderRadius,
-      transition: el.style.transition
-    };
+    if (currentFlash && currentFlash !== el) restoreFlash(currentFlash);
+    let st = flashState.get(el);
+    if (!st) {
+      st = {
+        outline: el.style.outline,
+        offset: el.style.outlineOffset,
+        radius: el.style.borderRadius,
+        transition: el.style.transition,
+        timer: null
+      };
+      flashState.set(el, st);
+    }
+    clearTimeout(st.timer);
     el.style.transition = 'outline-color .25s ease';
     el.style.outline = '2px solid ' + (app.dataset.theme === 'dark' ? '#2ec08f' : '#10a37f');
     el.style.outlineOffset = '6px';
     el.style.borderRadius = '10px';
-    setTimeout(() => {
-      el.style.outline = prev.outline;
-      el.style.outlineOffset = prev.offset;
-      el.style.borderRadius = prev.radius;
-      el.style.transition = prev.transition;
-    }, 1500);
+    currentFlash = el;
+    st.timer = setTimeout(() => restoreFlash(el), 1500);
   }
 
   function setActive(key, scrollInList) {
@@ -919,10 +961,19 @@
       }, 1500);
       toast('已导出 Markdown');
     } catch (e) {
-      navigator.clipboard.writeText(md).then(
-        () => toast('已复制到剪贴板'),
-        () => toast('导出失败')
-      );
+      // 下载被禁（或 Blob 失败）时退回复制；clipboard 在 http 等非安全上下文里可能是 undefined
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          navigator.clipboard.writeText(md).then(
+            () => toast('下载被拦截，已改为复制到剪贴板'),
+            () => toast('导出失败：下载与剪贴板均不可用')
+          );
+        } else {
+          toast('导出失败：当前环境不支持下载，请检查浏览器设置');
+        }
+      } catch (e2) {
+        toast('导出失败');
+      }
     }
   }
 
@@ -970,6 +1021,15 @@
     if (li) jumpTo(li.dataset.key);
   });
 
+  // 键盘操作：Tab 到某条后 Enter / 空格即可跳转（与鼠标点击等效）
+  $list.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const li = e.target.closest('.item');
+    if (!li) return;
+    e.preventDefault();
+    jumpTo(li.dataset.key);
+  });
+
   $input.addEventListener('input', () => {
     query = $input.value.trim();
     render();
@@ -978,6 +1038,7 @@
     if (e.key === 'Enter') {
       const first = visibleItems()[0];
       if (first) jumpTo(first.key);
+      else if (query) toast('没有匹配的内容');
     }
     if (e.key === 'Escape') {
       $input.value = '';

@@ -15,6 +15,7 @@ npx playwright install chromium     # 若用 playwright-core，需自备浏览�
 node test-all.js      # 四场景：站点硬适配 / 编辑按钮启发式 / class 命名 / 无对话页面
 node test-narrow.js   # 647×352、1280×620、1600×900 三种窗口下，面板宽度与高度
 node test-v12.js      # v1.2 回归：动态新增提问 / 流式回答更新 / SPA 路由 / 启发式缓存失效
+node test-v121.js     # v1.2.1 回归：高亮不残留 / 键盘跳转 / 搜索高亮 / 导出降级与 aria
 node e2e.js           # 用 --load-extension 真实加载扩展，验证 manifest 与注入
 ```
 
