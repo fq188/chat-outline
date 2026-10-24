@@ -122,19 +122,41 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
-## 更新日志
+## 更新日志 / Changelog
 
-**v1.2.0**（性能与健壮性优化，功能不变）
+### v1.2.0 — 扫描性能与健壮性优化 / Faster, steadier scanning
 
-- 扫描加「廉价签名」：DOM 文本没变就跳过可见性测量 / 克隆清洗 / 渲染，流式输出期间开销大降
-- 识别未命中的页面按 DOM 纪元缓存空结果，不再每 400ms 重复跑全部探测
-- 「编辑」按钮启发式结果按按钮数戳记缓存，命中后不再每次扫描重算
-- 后台标签页暂停扫描，回到前台自动补扫
-- SPA 路由切换即时感知（history / popstate 钩子），轮询降为兜底
-- 暗色检测同时看 `html` 与 `body`；跳转高亮色跟随深浅主题；toast 跟随面板左右侧
-- 开启「答」后流式回答会实时更新目录条目
-- 点图标但页面未注入时，图标出现 ↻ 角标提示刷新页面
-- 长对话校验上限 400 → 1000 条
+功能与 v1.1.0 完全一致，未新增任何权限。
+Same feature set as v1.1.0 — no new permissions.
+
+**性能 / Performance**
+
+| 中文 | English |
+| --- | --- |
+| 扫描加「廉价签名」：DOM 文本没变就跳过可见性测量、克隆清洗与渲染，流式输出期间开销大降 | Each scan now computes a cheap signature: when the DOM text is unchanged, visibility measurement, clone-and-clean and re-render are skipped — a large saving while an answer streams in |
+| 识别未命中的页面按 DOM 纪元缓存空结果，不再每 400 ms 重跑全部探测 | Pages where nothing is detected cache that empty result per DOM epoch instead of re-running every probe every 400 ms |
+| 「编辑」按钮启发式的结果按按钮数打戳缓存，命中后不再每次扫描重算 | The Edit-button heuristic is cached and stamped by button count, so a hit is not recomputed on every scan |
+
+**健壮性 / Robustness**
+
+| 中文 | English |
+| --- | --- |
+| 后台标签页暂停扫描，回到前台自动补扫 | Scanning pauses in background tabs and resumes with a full rescan once the tab is active again |
+| SPA 路由切换即时感知（`history` / `popstate` 钩子），轮询降为兜底 | SPA route changes are picked up immediately through `history` / `popstate` hooks; polling is now only a fallback |
+| 长对话校验上限从 400 条提到 1000 条 | The long-conversation validation cap goes from 400 to 1000 messages |
+| 点图标但页面未注入脚本时，图标显示 ↻ 角标提示刷新 | If the toolbar icon is clicked on a page where the script was never injected, the icon shows a ↻ badge prompting a refresh |
+
+**界面与体验 / Look & Feel**
+
+| 中文 | English |
+| --- | --- |
+| 暗色检测同时看 `html` 与 `body`；跳转高亮色跟随深浅主题；toast 跟随面板所在的一侧 | Dark-mode detection now inspects both `html` and `body`; the jump highlight follows the light/dark theme; the toast follows whichever side the panel is on |
+| 开启「答」后，流式生成的回答会实时更新对应的目录条目 | With 答 (answers) enabled, a streaming reply updates its outline entry in real time |
+
+### v1.1.0 — 首个公开版本 / First public release
+
+62 个站点适配；悬浮目录、搜索过滤、滚动跟随、显示回答、Markdown 导出。
+62 supported sites, with a floating outline, search, scroll-spy, answer entries and Markdown export.
 
 ## 开发与测试
 
