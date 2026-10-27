@@ -125,6 +125,25 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.2.3 — 虚拟列表下也能列出整段对话 / Full outline on virtualized chats
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 长对话里目录只剩「我点开那条上下几条」：ChatGPT 这类站点用虚拟列表，滚远的消息会被卸载出 DOM，之前每次都按当前 DOM 重建目录，于是永远只有一小截 | On long chats the outline only listed the few messages around the one you clicked. Sites like ChatGPT use a virtual list that unmounts messages once you scroll away, and the outline was rebuilt from the current DOM every time — so it could only ever show that small slice |
+| 目录改为「长期档案 + 稳定 key」：每次扫描并进去重，被卸载的条目留在列表里，顺序按文档位置维护 | The outline now keeps a persistent archive keyed by stable message identity: each scan merges into it, unmounted entries stay in the list, and order follows document position |
+| 首次打开自动补扫一遍整段对话（从头滚到底再回到原位），条目从「几条」变成「全部」 | On first load it sweeps the whole conversation once (scrolls top to bottom, then restores your position), turning "a few entries" into "all of them" |
+| 编号在虚拟列表下会错位（DOM 序号不等于第几问），改为按合并后的顺序重新数 | Entry numbers drifted under virtualization (DOM index ≠ question number) and are now recomputed from the merged order |
+
+**体验 / Experience**
+
+| 中文 | English |
+| --- | --- |
+| 点击当前不在 DOM 里的条目：先按记录下来的相对位置猜一屏，猜不中就在附近细搜，再不行从头线性扫一遍 | Clicking an entry that is not currently rendered now seeks it: it guesses from the recorded relative position, searches nearby, then falls back to a linear scan |
+| 补扫期间你一动滚轮或按键就立刻中止并还原位置，不会跟你抢滚动 | If you scroll or press a key mid-sweep it stops immediately and restores your position |
+| 切换对话时档案自动清空，不会串场 | The archive resets when you switch conversations |
+
 ### v1.2.2 — 图片消息与刷新后空目录 / Image-only prompts & empty outline after reload
 
 **修复 / Fixes**

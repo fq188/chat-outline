@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>虚拟列表仿真 · Chat Outline</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        color: #1f2328;
+      }
+      #scroller {
+        height: 100vh;
+        overflow-y: auto;
+        background: #fff;
+      }
+      #inner {
+        position: relative;
+      }
+      article {
+        position: absolute;
+        left: 0;
+        right: 0;
+        box-sizing: border-box;
+        padding: 14px 28px;
+        overflow: hidden;
+        border-bottom: 1px solid #ececf1;
+      }
+      article > div {
+        border-radius: 12px;
+        padding: 10px 14px;
+      }
+      .role-user {
+        background: #f4f4f5;
+      }
+      .role-asst {
+        background: #fafafa;
+        color: #444;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      仿真 ChatGPT 的虚拟列表：只有视口附近的消息留在 DOM 里，滚远了就卸载。
+      这正是「目录里只有点开那条上下几条」的成因。
+      60 条消息 = 30 问 + 30 答，索引写在 data-testid="conversation-turn-<i>"。
+    -->
+    <div id="scroller">
+      <div id="inner"><div id="pad"></div></div>
+    </div>
+    <script>
+      (function () {
+        var N = 60;
+        var msgs = [];
+        var top = 0;
+        for (var i = 0; i < N; i += 1) {
+          var isUser = i % 2 === 0;
+          var h = isUser ? 120 + (i % 3) * 10 : 300 + (i % 5) * 20;
+          msgs.push({ i: i, isUser: isUser, h: h, top: top, n: Math.floor(i / 2) + 1 });
+          top += h;
+        }
+        var total = top;
+
+        var scroller = document.getElementById('scroller');
+        var inner = document.getElementById('inner');
+        var pad = document.getElementById('pad');
+        pad.style.height = total + 'px';
+
+        var mounted = new Map();
+
+        function render() {
+          var view = scroller.clientHeight || 800;
+          var st = scroller.scrollTop;
+          var lo = st - view * 2;
+          var hi = st + view * 3;
+          var want = new Set();
+          for (var k = 0; k < msgs.length; k += 1) {
+            var m = msgs[k];
+            if (m.top + m.h > lo && m.top < hi) want.add(m.i);
+          }
+          mounted.forEach(function (el, i) {
+            if (!want.has(i)) {
+              el.remove();
+              mounted.delete(i);
+            }
+          });
+          want.forEach(function (i) {
+            if (mounted.has(i)) return;
+            var mm = msgs[i];
+            var art = document.createElement('article');
+            art.setAttribute('data-testid', 'conversation-turn-' + i);
+            art.style.top = mm.top + 'px';
+            art.style.height = mm.h + 'px';
+            var div = document.createElement('div');
+            div.setAttribute('data-message-author-role', mm.isUser ? 'user' : 'assistant');
+            div.className = mm.isUser ? 'role-user' : 'role-asst';
+            div.textContent = mm.isUser
+              ? '第 ' + mm.n + ' 个问题：验证虚拟列表下能不能把整段对话都收进目录。'
+              : '第 ' + mm.n + ' 条回答：' + new Array(25).join('内容填充 ');
+            art.appendChild(div);
+            inner.appendChild(art);
+            mounted.set(i, art);
+          });
+        }
+
+        var ticking = false;
+        scroller.addEventListener(
+          'scroll',
+          function () {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(function () {
+              ticking = false;
+              render();
+            });
+          },
+          { passive: true }
+        );
+
+        render();
+        window.__msgTotal = N;
+        window.__totalHeight = total;
+        window.__mountedCount = function () {
+          return mounted.size;
+        };
+      })();
+    </script>
+  </body>
+</html>

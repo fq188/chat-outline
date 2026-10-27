@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2.2)
+ * 对话目录 · Chat Outline  (v1.2.3)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -487,6 +487,19 @@
   // 偏好读取完成后才允许自动展开，避免刷新瞬间先弹一下面板再收起
   let bootReady = false;
 
+  // —— 虚拟列表累积（v1.2.3）——
+  // ChatGPT 这类站点只把视口附近的几轮对话留在 DOM 里，滚远了就卸载。
+  // 如果每次都「按当前 DOM 重建目录」，看到的永远只是点开那条上下几条。
+  // 所以改成：每次扫描都并进一份长期档案（按稳定 key 去重），顺序按文档位置维护。
+  const archive = new Map(); // key -> item
+  let order = []; // key 数组，文档顺序
+  let archiveHref = '';
+  let sweepTimer = null;
+  let sweeping = false;
+  let sweepAbort = false;
+  let sweptOnce = false;
+  let sweepBlockedUntil = 0;
+
   /* ======================= 7. 样式 ======================= */
   const CSS = `
   :host { all: initial; }
@@ -714,6 +727,82 @@
     app.dataset.theme = isDarkPage() ? 'dark' : 'light';
   }
 
+  /* ======================= 8.5 滚动容器 / 稳定 key ======================= */
+  const raf = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // 消息往上找第一个「能滚且真的在滚」的祖先，就是对话滚动容器。
+  // 虚拟列表只渲染这个容器的视口附近，靠它才能把整段对话扫一遍。
+  function findScroller(node) {
+    let el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    while (el && el !== document.body && el !== document.documentElement) {
+      let cs = null;
+      try {
+        cs = getComputedStyle(el);
+      } catch (e) {
+        cs = null;
+      }
+      const oy = cs && cs.overflowY;
+      if (
+        (oy === 'auto' || oy === 'scroll' || oy === 'overlay') &&
+        el.scrollHeight > el.clientHeight + 24
+      ) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    const se = document.scrollingElement || document.documentElement;
+    return se && se.scrollHeight > se.clientHeight + 24 ? se : null;
+  }
+
+  // 元素相对滚动容器的位置比例（0~1）。虚拟列表里条目会被卸载，
+  // 记下这个比例，跳转时才有「大概往哪儿滚」的依据。
+  function ratioOf(el) {
+    if (!el || !el.getBoundingClientRect) return 0;
+    const sc = findScroller(el);
+    if (!sc) return 0;
+    const rect = el.getBoundingClientRect();
+    const srect = sc.getBoundingClientRect ? sc.getBoundingClientRect() : { top: 0 };
+    const top = rect.top - srect.top + (sc.scrollTop || 0);
+    return Math.max(0, Math.min(1, top / Math.max(1, sc.scrollHeight)));
+  }
+
+  // 从属性里抠「第几轮」：用来判断序号有没有缺口，也是跳转定位的备用锚点
+  const IDX_RE = /(\d+)\s*$/;
+  function indexOfNode(el) {
+    if (!el || !el.getAttribute) return null;
+    const cands = [
+      el.getAttribute('data-testid'),
+      el.getAttribute('data-turn-id'),
+      el.getAttribute('data-message-id'),
+      el.getAttribute('data-index'),
+      el.id
+    ];
+    for (const c of cands) {
+      if (!c) continue;
+      if (/^\d+$/.test(c)) return parseInt(c, 10);
+      const m = String(c).match(IDX_RE);
+      if (m && /(turn|message|msg|index|item)/i.test(String(c))) return parseInt(m[1], 10);
+    }
+    return null;
+  }
+
+  // 没有稳定属性时的兜底 key：用文本指纹，位置变了也不会变成新条目
+  function hashText(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i += 1) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36) + '-' + s.length.toString(36);
+  }
+
+  function keyOfNode(el, role, text) {
+    const attr =
+      (el &&
+        el.getAttribute &&
+        (el.getAttribute('data-testid') || el.getAttribute('data-turn-id') || el.id)) ||
+      '';
+    return attr ? 'k:' + attr : 't:' + role + ':' + hashText(text);
+  }
+
   /* ======================= 9. 扫描 ======================= */
   // 廉价签名：只数节点和文本长度（textContent 不触发排版）。
   // 没变就跳过后面整套「getBoundingClientRect 可见性测量 + 克隆清洗 + 排序渲染」，
@@ -742,10 +831,12 @@
     return out;
   }
 
-  function scan(forceDetect) {
+  function scan(forceDetect, quiet) {
     const p = buildPlan(forceDetect);
     if (!p) {
       items = [];
+      archive.clear();
+      order = [];
       lastSignature = '';
       lastCheapSig = '';
       app.dataset.has = '0';
@@ -783,32 +874,107 @@
       return 0;
     });
 
+    // 换了对话就清空档案，别把上一段的条目混进来
+    if (archiveHref && archiveHref !== location.href) {
+      archive.clear();
+      order = [];
+      sweptOnce = false;
+    }
+    archiveHref = location.href;
+
+    // 稳定 key：优先用站点给的 turn/message 标识，没有就用文本指纹。
+    // 虚拟列表会反复卸载重挂同一条消息，key 不稳就会重复/错位。
+    const usedKeys = new Set();
+    all.forEach((it) => {
+      const base = keyOfNode(it.el, it.role, it.text);
+      let k = base;
+      let n = 1;
+      while (usedKeys.has(k)) {
+        n += 1;
+        k = base + '#' + n;
+      }
+      usedKeys.add(k);
+      it.key = k;
+      it.idx = indexOfNode(it.el);
+    });
+
+    // 并入档案：本轮看到的更新，没看到的保留（说明被虚拟列表卸载了）
+    const batchKeys = all.map((i) => i.key);
+    const inBatch = new Set(batchKeys);
+    for (const it of all) {
+      const prev = archive.get(it.key);
+      if (prev) {
+        prev.raw = it.raw;
+        prev.text = it.text;
+        if (it.time) prev.time = it.time;
+        prev.el = it.el;
+        if (it.idx != null) prev.idx = it.idx;
+        prev.ratio = ratioOf(it.el);
+        prev.gone = false;
+      } else {
+        it.ratio = ratioOf(it.el);
+        it.gone = false;
+        archive.set(it.key, it);
+      }
+    }
+    for (const [k, v] of archive) {
+      if (inBatch.has(k)) continue;
+      v.gone = !(v.el && v.el.isConnected);
+    }
+
+    // 顺序：把本轮新出现的 key 插到相邻已知条目之间，
+    // 这样「往上翻到更早的消息」也能落到正确位置，而不是接在末尾
+    let cursor = -1;
+    let headPos = 0;
+    for (const k of batchKeys) {
+      const at = order.indexOf(k);
+      if (at >= 0) {
+        cursor = at;
+        continue;
+      }
+      let pos;
+      if (cursor >= 0) {
+        pos = cursor + 1;
+      } else {
+        pos = headPos;
+        headPos += 1;
+      }
+      order.splice(pos, 0, k);
+      cursor = pos;
+    }
+
+    items = order.map((k) => archive.get(k)).filter(Boolean);
+
+    // 重新编号：DOM 序号在虚拟列表下不可靠，改成按合并后的顺序数第几次提问
     let q = 0;
-    all.forEach((it, i) => {
+    items.forEach((it, i) => {
       if (it.role === 'user') q += 1;
       it.q = q || 1;
-      it.key =
-        (it.el.getAttribute && (it.el.getAttribute('data-testid') || it.el.id)) ||
-        `${it.role}-${i}-${it.text.slice(0, 12)}`;
+      it.pos = i;
     });
 
     // 签名里只在「答」打开时纳入回答长度 —— 这样流式回答时列表能跟着更新；
     // 没开「答」时不纳入，避免回答增长引起无谓的列表重建
-    const sig =
-      all
-        .filter((i) => i.role === 'user')
-        .map((i) => i.key + '|' + i.text.slice(0, 40))
-        .join('~') +
-      (showAssistant ? '|A' + all.filter((i) => i.role === 'assistant').map((i) => i.raw.length).join(',') : '');
+    const sig = items
+      .map(
+        (i) =>
+          i.key +
+          '|' +
+          (i.role === 'user' ? i.text.slice(0, 40) : showAssistant ? i.raw.length : '')
+      )
+      .join('~');
 
-    items = all;
     app.dataset.has = items.some((i) => i.role === 'user') ? '1' : '0';
 
-    if (sig !== lastSignature) {
-      lastSignature = sig;
-      render();
-    } else {
-      $count.textContent = String(items.filter((i) => i.role === 'user').length);
+    // quiet：全量补扫过程中的静默采集，只并入档案、不重绘列表，
+    // 免得几十次扫描把面板刷得直跳
+    if (!quiet) {
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        render();
+      } else {
+        $count.textContent = String(items.filter((i) => i.role === 'user').length);
+      }
     }
 
     if (!openedOnce && items.some((i) => i.role === 'user')) {
@@ -826,7 +992,108 @@
         retryTimer = null;
       }
     }
+
+    // 虚拟列表：目录里出现序号缺口（中间几轮被卸载了），补一次全量扫描
+    if (!quiet) maybeSweep();
     return items;
+  }
+
+  // 判断「现在看到的只是整段对话的一小截」：
+  // 已渲染条目的高度加起来，远小于容器总高 → 剩下的都被虚拟列表卸载了。
+  function maybeSweep() {
+    if (sweeping || sweptOnce) return;
+    if (Date.now() < sweepBlockedUntil) return;
+    if (document.hidden) return;
+    const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
+    if (!anyEl) return;
+    const sc = findScroller(anyEl);
+    if (!sc) return;
+    const view = sc.clientHeight || 400;
+    if (sc.scrollHeight < view * 2.5) return;
+    let covered = 0;
+    for (const it of items) {
+      if (!it.el || !it.el.isConnected) continue;
+      const r = it.el.getBoundingClientRect();
+      if (r.height > 0) covered += r.height;
+    }
+    if (covered * 1.6 < sc.scrollHeight) scheduleSweep();
+  }
+
+  function scheduleSweep() {
+    if (sweepTimer || sweeping) return;
+    sweepTimer = setTimeout(() => {
+      sweepTimer = null;
+      sweep();
+    }, 600);
+  }
+
+  // 全量补扫：从头滚到底，每一屏采一次，最后把滚动位置还回去。
+  // 只在「检测到被虚拟化」时跑一次；用户中途滚轮/按键就立刻中止。
+  async function sweep() {
+    if (sweeping) return;
+    const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
+    if (!anyEl) return;
+    const sc = findScroller(anyEl);
+    if (!sc) {
+      sweptOnce = true;
+      return;
+    }
+    const view = sc.clientHeight || 400;
+    if (sc.scrollHeight < view * 1.5) {
+      sweptOnce = true;
+      return;
+    }
+
+    sweeping = true;
+    sweepAbort = false;
+    // 补扫期间页面自己在滚，别让滚动跟随把高亮乱改
+    suppressSpyUntil = Date.now() + 9000;
+    const start = sc.scrollTop;
+    const prevBehavior = sc.style.scrollBehavior;
+    sc.style.scrollBehavior = 'auto';
+    const cancel = () => {
+      sweepAbort = true;
+    };
+    window.addEventListener('wheel', cancel, { passive: true, once: true });
+    window.addEventListener('touchstart', cancel, { passive: true, once: true });
+    window.addEventListener('keydown', cancel, { once: true });
+
+    const t0 = Date.now();
+    try {
+      const step = Math.max(160, Math.floor(view * 0.7));
+      let y = 0;
+      while (Date.now() - t0 < 12000) {
+        sc.scrollTop = y;
+        await raf();
+        await sleep(50);
+        scan(true, true);
+        if (sweepAbort) break;
+        if (y >= sc.scrollHeight - view) break;
+        y += step;
+      }
+      if (!sweepAbort) {
+        sc.scrollTop = sc.scrollHeight;
+        await raf();
+        await sleep(80);
+        scan(true, true);
+      }
+    } catch (e) {
+      /* 页面切换/节点被删都可能抛，忽略 */
+    } finally {
+      sc.style.scrollBehavior = prevBehavior;
+      try {
+        sc.scrollTop = start;
+      } catch (e) {
+        /* ignore */
+      }
+      await raf();
+      await sleep(60);
+      scan(true);
+      suppressSpyUntil = Date.now() + 300;
+      sweeping = false;
+      sweptOnce = true;
+      if (sweepAbort) sweepBlockedUntil = Date.now() + 20000;
+    }
   }
 
   /* ======================= 10. 渲染 ======================= */
@@ -945,20 +1212,84 @@
   }
 
   function jumpTo(key) {
-    let it = items.find((i) => i.key === key);
+    const it = archive.get(key) || items.find((i) => i.key === key);
     if (!it) return;
-    if (!it.el.isConnected) {
-      scan(true);
-      it = items.find((i) => i.key === key) || it;
-      if (!it.el.isConnected) {
-        toast('这条消息当前未渲染，先手动滚动一下再试');
-        return;
-      }
+    if (it.el && it.el.isConnected) {
+      doJump(it);
+      return;
     }
+    seekTo(it);
+  }
+
+  function doJump(it) {
+    if (!it || !it.el || !it.el.isConnected) return;
     suppressSpyUntil = Date.now() + 1000;
-    it.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    try {
+      it.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) {
+      it.el.scrollIntoView();
+    }
     flash(it.el);
-    setActive(key, true);
+    setActive(it.key, true);
+  }
+
+  // 目标被虚拟列表卸载了：先按记下的相对位置猜一屏，猜不中就在附近细搜，
+  // 再不行从头线性扫一遍。全程临时关掉平滑滚动，避免几十次动画互相打断。
+  async function seekTo(it) {
+    const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
+    const sc = anyEl ? findScroller(anyEl) : null;
+    if (!sc) {
+      toast('这条消息当前未渲染，先手动滚动一下再试');
+      return;
+    }
+    const prevBehavior = sc.style.scrollBehavior;
+    sc.style.scrollBehavior = 'auto';
+    suppressSpyUntil = Date.now() + 2500;
+
+    const maxTop = () => Math.max(0, sc.scrollHeight - sc.clientHeight);
+    const probe = async (y) => {
+      sc.scrollTop = Math.max(0, Math.min(maxTop(), y));
+      await raf();
+      await sleep(85);
+      scan(true, true);
+      const cur = archive.get(it.key);
+      return cur && cur.el && cur.el.isConnected ? cur : null;
+    };
+
+    try {
+      const view = sc.clientHeight || 400;
+      const step = Math.max(120, Math.floor(view * 0.6));
+      let guess = Math.round((it.ratio || 0) * sc.scrollHeight - view * 0.4);
+      guess = Math.max(0, Math.min(maxTop(), guess));
+
+      for (let d = 0; d <= 4; d += 1) {
+        const offs = d === 0 ? [0] : [-d * step, d * step];
+        for (const off of offs) {
+          const hit = await probe(guess + off);
+          if (hit) {
+            sc.style.scrollBehavior = prevBehavior;
+            doJump(hit);
+            return;
+          }
+        }
+      }
+
+      // 长对话兜底：从头扫一遍（每屏一次，最多 ~40 屏）
+      const total = maxTop();
+      for (let y = 0; y <= total; y += step) {
+        const hit = await probe(y);
+        if (hit) {
+          sc.style.scrollBehavior = prevBehavior;
+          doJump(hit);
+          return;
+        }
+      }
+      toast('这条消息暂时找不到，滚一下再试');
+    } catch (e) {
+      toast('跳转失败，请手动滚动到那条消息');
+    } finally {
+      sc.style.scrollBehavior = prevBehavior;
+    }
   }
 
   function updateActiveByScroll() {
@@ -1277,6 +1608,11 @@
       if (location.href === lastHref) return;
       lastHref = location.href;
       items = [];
+      archive.clear();
+      order = [];
+      archiveHref = location.href;
+      sweptOnce = false;
+      sweepBlockedUntil = 0;
       activeKey = null;
       lastSignature = '';
       lastCheapSig = '';
