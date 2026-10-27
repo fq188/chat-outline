@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.3.1)
+ * 对话目录 · Chat Outline  (v1.3.2)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -311,6 +311,10 @@
   const DAY_RE =
     /^(?:(?:今天|昨天|前天|today|yesterday)|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}(?:,\s*\d{4})?|(?:\d{4}年)?\d{1,2}月\d{1,2}日|(?:\d{4}[-/])?\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)$/i;
 
+  // 「这是一条消息」的通用标记：日期分隔条绝不能长在它里面
+  const MSG_SEL =
+    '[data-message-author-role], [data-testid^="conversation-turn"], [data-turn-id], user-query, model-response, message-content, .query-text';
+
   // 站点没给日期分隔条时，退一步用它给的时间戳（M/D HH:MM）折成「M月D日」
   function dayFromTime(t) {
     const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(String(t || ''));
@@ -340,6 +344,10 @@
       if (el.querySelector('[data-message-author-role], article, [data-testid^="conversation-turn"]')) {
         continue;
       }
+      // 自己就长在消息里面（比如正文里的「1/2」「今天」）也一样跳过 ——
+      // 只查子孙节点会漏掉这一层，把消息里的「1/2」当成日期分隔条，
+      // 那一天就会在目录里被劈成两半
+      if (el.parentElement && el.parentElement.closest(MSG_SEL)) continue;
       const raw = el.textContent || '';
       if (raw.length > 32) continue;
       const txt = normalizeDay(raw);
@@ -995,6 +1003,114 @@
     return out;
   }
 
+  /* —— 顺序维护 ——
+   * order 是「文档顺序」的 key 数组，但站点会做两件让人措手不及的事：
+   *   ① 虚拟列表只挂一小段，我们永远只能看到局部顺序；
+   *   ② turn 编号会被复用（编辑、重新发送、切分支后，同一个 N 换了一条消息）。
+   * 于是每条新消息必须靠「DOM 里挨着谁」来落位，不能一律接在末尾，
+   * 也不能因为 key 撞上了就原地改字 —— 那就是「刚问的问题显示在中间」的成因。
+   */
+  function mergeBatchOrder(batchKeys, atTop) {
+    const n = batchKeys.length;
+    for (let i = 0; i < n; i += 1) {
+      const k = batchKeys[i];
+      if (order.indexOf(k) >= 0) continue;
+      let pos = -1;
+      // ① 后面最近的一条已知条目 → 插到它前面（往上翻到更早的消息时落回原位）
+      for (let j = i + 1; j < n; j += 1) {
+        const aj = order.indexOf(batchKeys[j]);
+        if (aj >= 0) {
+          pos = aj;
+          break;
+        }
+      }
+      // ② 后面没有已知条目 → 贴到前面最近的那条后面
+      if (pos < 0) {
+        for (let j = i - 1; j >= 0; j -= 1) {
+          const aj = order.indexOf(batchKeys[j]);
+          if (aj >= 0) {
+            pos = aj + 1;
+            break;
+          }
+        }
+      }
+      // ③ 整批都是新的：停在最顶上说明这是更早的历史，插队首；
+      //    否则就是刚追加的一轮，放末尾
+      if (pos < 0) pos = atTop ? 0 : order.length;
+      order.splice(pos, 0, k);
+    }
+  }
+
+  // 本轮看到的 DOM 顺序就是真相：相邻两条在 order 里反过来了，
+  // 说明其中一条位置过时了，把后一条挪到前一条之后
+  function fixBatchOrder(batchKeys) {
+    for (let i = 1; i < batchKeys.length; i += 1) {
+      const a = order.indexOf(batchKeys[i - 1]);
+      const b = order.indexOf(batchKeys[i]);
+      if (a < 0 || b < 0 || b > a) continue;
+      order.splice(b, 1);
+      order.splice(order.indexOf(batchKeys[i - 1]) + 1, 0, batchKeys[i]);
+    }
+  }
+
+  // 已经滚到对话最底部：本轮最后一条就是「最新的一条」。
+  // order 里排在它后面的，只可能是「编辑消息 / 重新发送 / 切分支」之后
+  // 页面已经不再渲染的旧分支残留 —— 清掉，并把最新那条顶到末尾。
+  // 这是「刚问出的问题显示在目录中间」的根因：新问题按锚点插到了老位置，
+  // 废弃分支的那几条还赖在它后面冒充更晚的提问。
+  function fixTailOrder(batchKeys, atTail) {
+    if (!atTail || !batchKeys.length) return;
+    const lastKey = batchKeys[batchKeys.length - 1];
+    const j = order.indexOf(lastKey);
+    if (j < 0 || j === order.length - 1) return;
+    const tail = order.slice(j + 1);
+    // 安全阀：排在后面的条目要是还挂在页面上，说明 lastKey 并不是最后一条
+    for (const k of tail) {
+      const o = archive.get(k);
+      if (o && o.el && o.el.isConnected) return;
+    }
+    const lastIt = archive.get(lastKey);
+    const lastIdx = lastIt && lastIt.idx != null ? lastIt.idx : null;
+    const keep = [];
+    for (const k of tail) {
+      const o = archive.get(k);
+      // 轮次序号比最后一条还大 → 页面上不可能再有它了，是废弃分支的残留
+      if (lastIdx != null && o && o.idx != null && o.idx > lastIdx) {
+        archive.delete(k);
+        continue;
+      }
+      keep.push(k);
+    }
+    order = order.slice(0, j).concat(keep, [lastKey]);
+  }
+
+  // 日期标签只会沿时间线往前走：「今天 → 1/2 → 今天」里的中间那段一定是误识别
+  function fixDays(list) {
+    const runs = [];
+    for (const it of list) {
+      const d = it.day || '';
+      const last = runs[runs.length - 1];
+      if (last && last.label === d) last.items.push(it);
+      else runs.push({ label: d, items: [it] });
+    }
+    for (let k = 1; k < runs.length; k += 1) {
+      const lab = runs[k].label;
+      if (!lab) continue;
+      let first = -1;
+      for (let j = 0; j < k; j += 1) {
+        if (runs[j].label === lab) {
+          first = j;
+          break;
+        }
+      }
+      if (first < 0) continue;
+      for (let j = first + 1; j <= k; j += 1) {
+        runs[j].label = lab;
+        for (const x of runs[j].items) x.day = lab;
+      }
+    }
+  }
+
   function scan(forceDetect, quiet) {
     const p = buildPlan(forceDetect);
     if (!p) {
@@ -1097,26 +1213,16 @@
       v.gone = !(v.el && v.el.isConnected);
     }
 
-    // 顺序：把本轮新出现的 key 插到相邻已知条目之间，
-    // 这样「往上翻到更早的消息」也能落到正确位置，而不是接在末尾
-    let cursor = -1;
-    let headPos = 0;
-    for (const k of batchKeys) {
-      const at = order.indexOf(k);
-      if (at >= 0) {
-        cursor = at;
-        continue;
-      }
-      let pos;
-      if (cursor >= 0) {
-        pos = cursor + 1;
-      } else {
-        pos = headPos;
-        headPos += 1;
-      }
-      order.splice(pos, 0, k);
-      cursor = pos;
-    }
+    // 顺序校正（三步）：DOM 顺序才是真相。
+    // 站点复用 turn 编号、或同一句话被重新发送时，档案里那条会赖在老位置不动，
+    // 表现就是「刚问的问题显示在目录中间」—— 必须按眼下看到的顺序修回来。
+    const scAny = all.length ? all[0].el : null;
+    const scNow = scAny ? findScroller(scAny) : null;
+    const atTop = !scNow || scNow.scrollTop <= 4;
+    const atTail = !!scNow && scNow.scrollTop + scNow.clientHeight >= scNow.scrollHeight - 8;
+    mergeBatchOrder(batchKeys, atTop);
+    fixBatchOrder(batchKeys);
+    fixTailOrder(batchKeys, atTail);
 
     items = order.map((k) => archive.get(k)).filter(Boolean);
 
@@ -1127,6 +1233,10 @@
       if (it.day) carryDay = it.day;
       else if (carryDay) it.day = carryDay;
     }
+
+    // 日期标签在时间线上只会往前走。同一个标签「死灰复燃」（今天 → 1/2 → 今天），
+    // 中间那段就是误识别，并回前一段，免得同一天被切成三块
+    fixDays(items);
 
     // 重新编号：DOM 序号在虚拟列表下不可靠，改成按合并后的顺序数第几次提问
     let q = 0;
@@ -1920,6 +2030,9 @@
     $count.textContent = query ? `${userShown}/${userTotal}` : String(userTotal);
 
     const keepScroll = $list.scrollTop;
+    // 原本就贴在列表底部（在看最新几条）的话，渲染完继续贴在底部，
+    // 新问出来的那一句才不会「长在看不见的地方」
+    const keepBottom = $list.scrollHeight - keepScroll - $list.clientHeight < 24;
 
     if (!list.length) {
       $list.innerHTML = `<li class="empty">${
@@ -1966,7 +2079,7 @@
       .join('');
 
     $list.innerHTML = html;
-    $list.scrollTop = keepScroll;
+    $list.scrollTop = keepBottom ? $list.scrollHeight : keepScroll;
     lastGroups = groups;
     updateFoldBar(groups);
   }

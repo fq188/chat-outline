@@ -108,6 +108,7 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 - **虚拟滚动**：ChatGPT 这类站点只渲染视口附近的消息，未挂载的历史抓不到。往上滚动加载更多后，目录会自动补全。
 - **时间戳**：只有页面本身渲染了时间才会显示，扩展不会去猜时间。
+- **改写消息**：编辑某条提问或重新发送之后，页面上被丢掉的那几轮会从目录里一起移除 —— 因为它们已经不属于这段对话了。
 - **A/B 测试**：各家前端常灰度发布，同一站点不同账号的 DOM 可能不同。识别不到时按 `Alt+Q` 打开面板，在「选择器设置」里手填选择器即可临时救急，也欢迎提 issue 附上 DOM 结构。
 
 ## 想加一个站点
@@ -129,6 +130,19 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
 ## 更新日志 / Changelog
+
+### v1.3.2 — 刚问出的问题一定落在最后 / New questions always land last
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 改了前面的消息、或者把同一句重新发一遍之后，**刚问的那句会显示在目录中间**，后面还跟着几条已经不在页面上、只在目录里「诈尸」的旧提问 | After editing an earlier message or re-sending the same question, **the new question showed up in the middle of the outline**, followed by old questions that no longer exist on the page |
+| 原因：站点会给每条消息一个位置编号（`conversation-turn-N`），改写之后这个编号会被后面的消息重新占用。扩展按编号认人，就把新消息当成老消息「原地改字」，位置自然还是老的；被丢掉的那几轮也留在列表里 | Cause: the site gives each message a positional id (`conversation-turn-N`), and after an edit that id gets reused by a later message. The extension keyed messages by that id, so the new message overwrote an old entry in place and kept the old position, while the discarded turns stayed in the list |
+| 现在改成「以页面上看到的先后顺序为准」：新条目按 DOM 里挨着谁落位；滚到底部时最后一条就是最新一条，排到它后面的旧分支残留会被清掉 | The outline now trusts the on-page order: new entries are placed next to whichever entry they are adjacent to in the DOM, and once you are scrolled to the bottom the last message is treated as the newest — leftovers from abandoned branches after it are dropped |
+| 消息正文里出现 `1/2`、`今天` 这类短文本时，会被误认成日期分隔条，同一天在目录里被劈成两块（例如「今天 5 轮 / 1/2 1 轮 / 今天 3 轮」） | Short snippets like `1/2` or `今天` inside a message body were mistaken for date dividers, splitting one day into several groups in the outline |
+| 日期分隔条现在只认长在消息外面的；另外加了一道「日期只会往前走」的校验，`今天 → 1/2 → 今天` 这种回退会被并回同一天 | Date dividers are now only accepted outside message bodies, plus a monotonicity check: a `today → 1/2 → today` regression gets merged back into one day |
+| 面板原本贴在底部（正在看最新几条）时，新增提问后列表会跟着滚到底，不会停在旧位置看不到新条目 | If the panel was scrolled to the bottom, it now stays at the bottom after new questions arrive instead of leaving them out of view |
 
 ### v1.3.1 — 全部展开 / 收起 + 折叠组头的最后一问 / Fold-all and a peek line
 
@@ -316,6 +330,9 @@ Same feature set as v1.1.0 — no new permissions.
 | `dev/mock-generic.html` | 只有「编辑」按钮的陌生结构（测试启发式） |
 | `dev/mock-universal.html` | 靠 class 命名（测试通用选择器） |
 | `dev/mock-empty.html` | 无对话页面（确认不会误弹） |
+| `dev/mock-virtual.html` | 虚拟列表（只挂视口附近的消息） |
+| `dev/mock-timeline.html` | 带日期分隔条的多天对话 |
+| `dev/mock-append.html` | 追加提问 / 切分支 / 复用消息编号 |
 
 ```bash
 cd dev
@@ -324,6 +341,8 @@ npx playwright install chromium
 
 node test-all.js    # 四场景识别 + 跳转 + 搜索 + 导出
 node test-narrow.js # 三种窗口尺寸下面板布局
+node test-v130.js   # 时间线分组、回答缩进、折叠
+node test-v132.js   # 新提问必须落在目录末尾（追加 / 切分支 / 编号复用）
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```
 

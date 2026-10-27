@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "对话目录 · Chat Outline",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "给 ChatGPT / Gemini / Claude / Copilot / DeepSeek / Kimi / 豆包 / 元宝 / 通义 等 62 个 AI 对话网站加悬浮目录：一键跳转任意历史提问，支持搜索、滚动跟随与导出 Markdown。",
   "homepage_url": "https://github.com/fq188/chat-outline",
   "permissions": [
