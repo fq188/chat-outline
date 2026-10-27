@@ -2352,12 +2352,22 @@
       store.get('pref:collapsed', false),
       store.get('pref:side', 'right'),
       store.get('pref:showAssistant', true),
-      store.get(`sel:${HOSTKEY}`, null)
-    ]).then(([collapsed, s, asst, sel]) => {
+      store.get(`sel:${HOSTKEY}`, null),
+      store.get('pref:asstMigrated', false)
+    ]).then(([collapsed, s, asst, sel, asstMigrated]) => {
       prefCollapsed = collapsed;
       side = s === 'left' ? 'left' : 'right';
       app.dataset.side = side;
       showAssistant = !!asst;
+      // v1.3.0 起回答默认显示：老用户之前点过「答」关掉的 false 只升级一次，
+      // 之后仍尊重用户自己的选择（否则升级后根本看不到新功能）
+      if (!asstMigrated) {
+        store.set('pref:asstMigrated', true);
+        if (asst === false) {
+          showAssistant = true;
+          store.set('pref:showAssistant', true);
+        }
+      }
       $btnAsst.setAttribute('aria-pressed', String(showAssistant));
       if (sel && (sel.user || sel.assistant)) {
         overrides = { user: sel.user || '', assistant: sel.assistant || '' };
