@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2.4)
+ * 对话目录 · Chat Outline  (v1.2.5)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -1009,16 +1009,42 @@
     if (document.hidden) return;
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
     if (!anyEl) return;
+
+    // ① 硬信号：轮次序号中间有洞，说明中间几轮压根没进过 DOM
+    //    （长回答很占高度时，覆盖率可能「看起来够」，只靠 ② 会漏掉这种情况）
+    const idx = archiveIndices();
+    if (idx && idx.holes.length) {
+      scheduleSweep();
+      return;
+    }
+
     const sc = findScroller(anyEl);
     if (!sc) return;
     const view = sc.clientHeight || 400;
-    if (sc.scrollHeight < view * 2.5) return;
+    const srect = sc.getBoundingClientRect ? sc.getBoundingClientRect() : { top: 0 };
+
+    // ② 位置信号（最可靠）：已挂载条目在容器里并没有铺满，
+    //    上面或下面还留着高度 → 那里有没挂载的消息
+    let firstTop = Infinity;
+    let lastBottom = -Infinity;
     let covered = 0;
     for (const it of items) {
       if (!it.el || !it.el.isConnected) continue;
       const r = it.el.getBoundingClientRect();
-      if (r.height > 0) covered += r.height;
+      if (r.height <= 0) continue;
+      const t = r.top - srect.top + (sc.scrollTop || 0);
+      if (t < firstTop) firstTop = t;
+      if (t + r.height > lastBottom) lastBottom = t + r.height;
+      covered += r.height;
     }
+    if (!isFinite(firstTop)) return;
+    if (firstTop > 48 || lastBottom < sc.scrollHeight - 48) {
+      scheduleSweep();
+      return;
+    }
+
+    // ③ 兜底：已渲染高度远小于容器总高
+    if (sc.scrollHeight < view * 2.5) return;
     if (covered * 1.6 < sc.scrollHeight) scheduleSweep();
   }
 
@@ -1114,11 +1140,14 @@
   async function sweepWith(sc, stepRatio, maxMs) {
     const before = archive.size;
     const view = sc.clientHeight || 400;
-    if (sc.scrollHeight < view * 1.5) return false;
+    const res = { grew: 0, moved: 0, ok: false };
+    if (sc.scrollHeight < view * 1.5) return res;
+
     const start = sc.scrollTop;
     const prevBehavior = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
     const t0 = Date.now();
+    const seenPos = new Set();
     try {
       const step = Math.max(120, Math.floor(view * stepRatio));
       let y = 0;
@@ -1126,6 +1155,7 @@
       while (guard < 500) {
         guard += 1;
         sc.scrollTop = y;
+        seenPos.add(Math.round(sc.scrollTop));
         if (y === 0) {
           // 顶部常常要等站点异步补更早的历史：只要还在变高就继续等
           let prevH = sc.scrollHeight;
@@ -1146,6 +1176,7 @@
       }
       if (!sweepAbort) {
         sc.scrollTop = sc.scrollHeight;
+        seenPos.add(Math.round(sc.scrollTop));
         await settleQuiet(600);
         scan(true, true);
       }
@@ -1161,30 +1192,39 @@
       await raf();
       await settleQuiet(250);
     }
-    return archive.size > before;
+    res.grew = archive.size - before;
+    res.moved = seenPos.size;
+    // 只有「位置真的变过」才算这个容器在滚；否则它只是看着像滚动容器
+    res.ok = res.moved >= 3;
+    return res;
   }
 
-  // 按「序号比例」回访缺口：中间某几轮没采到时，逐个洞跳过去补
+  // 按「序号比例」回访缺口：中间某几轮没采到时，逐个洞跳过去补。
+  // 单个洞补不到不立刻放弃，连续三次失败才收手。
   async function fillHoles(sc) {
     const view = sc.clientHeight || 400;
-    const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
-    if (!maxTop) return;
     const step = Math.max(120, Math.floor(view * 0.45));
-    for (let round = 0; round < 30; round += 1) {
+    let fails = 0;
+    let attempts = 0;
+    while (attempts < 24 && fails < 3) {
       const idx = archiveIndices();
       if (!idx || !idx.holes.length) return;
+      const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
+      if (!maxTop) return;
       const hole = idx.holes[0];
       const span = Math.max(1, idx.max - idx.min);
       const base = Math.round(((hole - idx.min) / span) * maxTop);
       let ok = false;
       for (let d = -2; d <= 2 && !ok; d += 1) {
+        attempts += 1;
         sc.scrollTop = Math.max(0, Math.min(maxTop, base + d * step));
         await settleQuiet(420);
         scan(true, true);
         const now = archiveIndices();
         if (!now || now.known.has(hole)) ok = true;
       }
-      if (!ok) return; // 这一处补不到，别死循环
+      if (ok) fails = 0;
+      else fails += 1;
     }
   }
 
@@ -1192,7 +1232,7 @@
     if (sweeping) return;
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
     if (!anyEl) return;
-    const cands = scrollerCandidates(anyEl);
+    const cands = scrollerCandidates(anyEl).slice(0, 4);
     if (!cands.length) {
       sweptOnce = true;
       return;
@@ -1210,15 +1250,33 @@
     window.addEventListener('keydown', cancel, { once: true });
 
     let worked = null;
+    const tried = [];
     try {
+      // 逐个候选试：只有「位置真的动过」的容器才可能把内容带出来
+      let best = null;
+      let bestGrew = 0;
       for (const sc of cands) {
         if (sweepAbort) break;
-        if (await sweepWith(sc, 0.7, 12000)) {
-          worked = sc;
+        const r = await sweepWith(sc, 0.7, 12000);
+        tried.push({
+          t: (sc.tagName || '') + '',
+          sh: sc.scrollHeight,
+          ch: sc.clientHeight,
+          moved: r.moved,
+          grew: r.grew
+        });
+        if (r.moved >= 3 && r.grew > bestGrew) {
+          best = sc;
+          bestGrew = r.grew;
+        }
+        if (r.moved >= 3 && r.grew >= 2) {
+          best = sc;
           break;
         }
       }
-      // 还有缺口（渲染慢 / 步进太大）：换细步长再走一遍
+      worked = best;
+
+      // 还有缺口（渲染慢 / 步进太大）：换细步长再走一遍，再逐洞回访
       const idx = archiveIndices();
       if (worked && idx && idx.holes.length && !sweepAbort) {
         await sweepWith(worked, 0.35, 12000);
@@ -1237,6 +1295,36 @@
       if (aborted) sweepBlockedUntil = Date.now() + 20000;
       saveArchive(true);
       reportGaps();
+      writeDiag({ aborted, tried });
+    }
+  }
+
+  // 本地诊断：把「找到多少 / 序号范围 / 候选容器」写进 chrome.storage.local，
+  // 排查时不用让用户开 DevTools
+  function writeDiag(extra) {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+      const idx = archiveIndices();
+      const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
+      const cands = (anyEl ? scrollerCandidates(anyEl) : []).slice(0, 4).map((sc) => ({
+        tag: String(sc.tagName || ''),
+        cls: String(sc.className || '').slice(0, 48),
+        sh: sc.scrollHeight,
+        ch: sc.clientHeight
+      }));
+      chrome.storage.local.set({
+        diag: {
+          at: Date.now(),
+          href: location.href,
+          items: items.length,
+          users: items.filter((i) => i.role === 'user').length,
+          range: idx ? [idx.min, idx.max, idx.holes.length] : null,
+          cands,
+          extra: extra || null
+        }
+      });
+    } catch (e) {
+      /* ignore */
     }
   }
 
@@ -1631,6 +1719,7 @@
         sweptOnce = false;
         sweepBlockedUntil = 0;
         scheduleSweep();
+        writeDiag({ phase: 'manual' });
         toast(`已重新扫描：${items.filter((i) => i.role === 'user').length} 个提问`);
       }
       if (act === 'export') exportMarkdown();
@@ -1831,6 +1920,8 @@
         scheduleRetry();
       }
     });
+
+    setTimeout(() => writeDiag({ phase: 'boot' }), 1500);
 
     // 刷新 / 从往返缓存恢复 / 资源加载完成，都补一次扫描
     if (document.readyState === 'complete') {

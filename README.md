@@ -125,6 +125,18 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.2.5 — 判断「要不要补扫」不再靠高度比例 / Better sweep trigger
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 只有一两条很长、占满屏幕的对话时，已渲染高度占比看着「够了」，补扫压根不触发，目录就停在那几条。现在改成看**位置**：只要已挂载的条目没有铺满容器（上面或下面还空着），就说明有消息没挂载 | When a conversation is dominated by one or two very tall messages, the rendered height made it look "complete" and the sweep never ran, leaving only those few entries. The check now looks at **position**: if the mounted entries do not tile the container (space left above or below), content is missing |
+| 补扫只在「序号有缺口」或「高度比例偏低」时才跑，漏了「上面一大段没挂载」这种最常见的情况 | The sweep only ran on index gaps or low height ratio, missing the most common case: a large unmounted stretch above |
+| 选滚动容器时先确认「位置真的动过」，避免把某个不会滚的祖先当成对话容器，白扫一遍就放弃 | A candidate scroller must now actually move before it is accepted, so an inert ancestor no longer eats the only attempt |
+| 缺口回访单个洞补不到就整体收手 → 改成连续三次失败才停 | Hole revisiting used to give up after a single failure; it now stops only after three consecutive failures |
+| 补扫结果会写一份本地诊断（条数 / 序号范围 / 候选容器），排查时不用开 DevTools | Each sweep now records a local diagnostic (counts, index range, candidate scrollers) so issues can be diagnosed without DevTools |
+
 ### v1.2.4 — 补扫更稳：慢渲染、多滚动容器、会话缓存 / Steadier sweep
 
 **修复 / Fixes**
