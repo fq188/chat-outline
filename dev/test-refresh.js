@@ -22,7 +22,7 @@ function check(name, cond, extra) {
 const textsOf = (page) =>
   page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host')?.shadowRoot;
-    return sr ? Array.from(sr.querySelectorAll('.item .txt')).map((n) => (n.innerText || '').trim()) : [];
+    return sr ? Array.from(sr.querySelectorAll('.item.user .txt')).map((n) => (n.innerText || '').trim()) : [];
   });
 
 (async () => {

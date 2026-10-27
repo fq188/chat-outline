@@ -30,7 +30,7 @@ const readState = (page) =>
   page.evaluate(() => {
     const host = document.getElementById('chat-outline-host');
     const sr = host && host.shadowRoot;
-    const its = sr ? Array.from(sr.querySelectorAll('.item')) : [];
+    const its = sr ? Array.from(sr.querySelectorAll('.item.user')) : [];
     const sc = document.getElementById('scroller');
     return {
       top: sc ? Math.round(sc.scrollTop) : 0,

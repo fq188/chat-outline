@@ -25,7 +25,7 @@ function check(name, cond, extra) {
 const readItems = (page) =>
   page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    return Array.from(sr.querySelectorAll('.item')).map((li) => ({
+    return Array.from(sr.querySelectorAll('.item.user')).map((li) => ({
       idx: (li.querySelector('.idx') || {}).textContent,
       txt: (li.querySelector('.txt') || {}).textContent
     }));

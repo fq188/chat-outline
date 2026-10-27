@@ -54,7 +54,7 @@ async function waitFor(page, fn, timeout = 15000, interval = 200) {
   const items = () =>
     page.evaluate(() => {
       const sr = document.getElementById('chat-outline-host').shadowRoot;
-      return Array.from(sr.querySelectorAll('.item')).map((li) => ({
+      return Array.from(sr.querySelectorAll('.item.user')).map((li) => ({
         idx: (li.querySelector('.idx') || {}).textContent,
         txt: (li.querySelector('.txt') || {}).textContent
       }));
@@ -83,7 +83,7 @@ async function waitFor(page, fn, timeout = 15000, interval = 200) {
   // 点第 1 条（此时已在视口外、被卸载）
   await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    sr.querySelectorAll('.item')[0].click();
+    sr.querySelectorAll('.item.user')[0].click();
   });
   await page.waitForTimeout(150);
   const topState = await page.evaluate(async () => {
@@ -105,7 +105,7 @@ async function waitFor(page, fn, timeout = 15000, interval = 200) {
   // 点第 30 条（需要滚到底部，那条当时也未渲染）
   await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    const all = sr.querySelectorAll('.item');
+    const all = sr.querySelectorAll('.item.user');
     all[all.length - 1].click();
   });
   await page.waitForTimeout(150);

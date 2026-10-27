@@ -67,7 +67,11 @@ async function openMock(browser, url, mockFile) {
     check('新增提问后目录更新为 7', c1 === 7, c1);
 
     // 2. 开「答」，再让最后一条回答原地变长（模拟流式输出）
-    await page.evaluate(() => document.getElementById('chat-outline-host').shadowRoot.querySelector('[data-act="asst"]').click());
+    // 回答在 v1.3.0 起默认就显示；万一哪天改回默认隐藏，这里补点一下
+    await page.evaluate(() => {
+      const sr = document.getElementById('chat-outline-host').shadowRoot;
+      if (!sr.querySelector('.item.asst')) sr.querySelector('[data-act="asst"]').click();
+    });
     await page.waitForTimeout(300);
     await page.evaluate(() => {
       const last = [...document.querySelectorAll('[data-message-author-role="assistant"]')].pop();

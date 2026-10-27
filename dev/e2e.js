@@ -27,7 +27,7 @@ const UDD = path.join(os.tmpdir(), 'co-udd-' + Date.now());
       injected: true,
       open: sr.querySelector('.app').dataset.open,
       count: sr.querySelector('.count').textContent,
-      items: sr.querySelectorAll('.item').length
+      items: sr.querySelectorAll('.item.user').length
     };
   });
   console.log('content script 注入:', res);

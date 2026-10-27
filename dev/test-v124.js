@@ -23,7 +23,7 @@ function check(name, cond, extra) {
 const readItems = (page) =>
   page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    return Array.from(sr.querySelectorAll('.item')).map((li) => ({
+    return Array.from(sr.querySelectorAll('.item.user')).map((li) => ({
       idx: (li.querySelector('.idx') || {}).textContent,
       txt: (li.querySelector('.txt') || {}).textContent
     }));
@@ -66,7 +66,7 @@ async function waitCount(page, n, timeout = 20000) {
     return new Promise((res) => {
       const tick = () => {
         const sr = document.getElementById('chat-outline-host');
-        if (sr && sr.shadowRoot && sr.shadowRoot.querySelectorAll('.item').length >= 30) return res(performance.now() - t0);
+        if (sr && sr.shadowRoot && sr.shadowRoot.querySelectorAll('.item.user').length >= 30) return res(performance.now() - t0);
         if (performance.now() - t0 > 3000) return res(-1);
         requestAnimationFrame(tick);
       };

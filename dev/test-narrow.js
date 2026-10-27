@@ -15,7 +15,7 @@ const EXT=path.resolve(__dirname, '..');
       const sr=document.getElementById('chat-outline-host').shadowRoot;
       const r=sr.querySelector('.panel').getBoundingClientRect();
       return {w:Math.round(r.width),h:Math.round(r.height),count:sr.querySelector('.count').textContent,
-              visibleItems:[...sr.querySelectorAll('.item')].length};
+              visibleItems:[...sr.querySelectorAll('.item.user')].length};
     });
     console.log(`${tag} ${w}x${h} -> panel ${box.w}x${box.h}  (占宽 ${Math.round(box.w/w*100)}%)  条目 ${box.visibleItems}  count ${box.count}`);
     await p.screenshot({path:`shots/30-${tag}.png`});

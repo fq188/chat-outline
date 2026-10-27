@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2.6)
+ * 对话目录 · Chat Outline  (v1.3.0)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -305,6 +305,90 @@
     return '';
   }
 
+  /* —— 时间线：从页面里找「日期分隔条」，把对话按天分组 —— */
+  // ChatGPT / Gemini / Claude 这类站点会在两轮之间插一条「今天 / 昨天 / 10月24日」
+  // 的分隔条。它没有统一的选择器，所以按「短文本 + 长得像日期」来认。
+  const DAY_RE =
+    /^(?:(?:今天|昨天|前天|today|yesterday)|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}(?:,\s*\d{4})?|(?:\d{4}年)?\d{1,2}月\d{1,2}日|(?:\d{4}[-/])?\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)$/i;
+
+  // 站点没给日期分隔条时，退一步用它给的时间戳（M/D HH:MM）折成「M月D日」
+  function dayFromTime(t) {
+    const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(String(t || ''));
+    return m ? `${parseInt(m[1], 10)}月${parseInt(m[2], 10)}日` : '';
+  }
+
+  function normalizeDay(txt) {
+    return String(txt || '')
+      .replace(/\s+/g, ' ')
+      .replace(/[·•,，.。]+$/g, '')
+      .trim()
+      .slice(0, 24);
+  }
+
+  // 只认「最内层」的日期文本节点：外层容器 textContent 也会命中，留着会一串重复
+  function collectDaySeps(root) {
+    const out = [];
+    if (!root || !root.querySelectorAll) return out;
+    let nodes = [];
+    try {
+      nodes = root.querySelectorAll('div,span,p,time,li,h1,h2,h3,h4,h5,h6,strong,b,em,small');
+    } catch (e) {
+      return out;
+    }
+    for (const el of nodes) {
+      // 消息内部一律不看，免得把「今天」这种正文当成日期分隔条
+      if (el.querySelector('[data-message-author-role], article, [data-testid^="conversation-turn"]')) {
+        continue;
+      }
+      const raw = el.textContent || '';
+      if (raw.length > 32) continue;
+      const txt = normalizeDay(raw);
+      if (!txt || !DAY_RE.test(txt)) continue;
+      let inner = false;
+      for (const c of el.children) {
+        if (DAY_RE.test(normalizeDay(c.textContent || ''))) {
+          inner = true;
+          break;
+        }
+      }
+      if (inner) continue;
+      out.push({ el, label: txt });
+    }
+    return out;
+  }
+
+  let daySepCache = { at: 0, seps: [] };
+  function daySeps() {
+    if (Date.now() - daySepCache.at < 3000) return daySepCache.seps;
+    const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
+    const root = (anyEl && findScroller(anyEl)) || document.body;
+    let seps = [];
+    try {
+      seps = collectDaySeps(root);
+    } catch (e) {
+      seps = [];
+    }
+    daySepCache = { at: Date.now(), seps };
+    return seps;
+  }
+
+  // 这条消息属于哪一天：取它前面最近的一条日期分隔条
+  function dayLabelFor(el, seps) {
+    if (!el || !seps.length) return '';
+    for (let i = seps.length - 1; i >= 0; i -= 1) {
+      const s = seps[i];
+      if (!s.el.isConnected) continue;
+      let pos = 0;
+      try {
+        pos = s.el.compareDocumentPosition(el);
+      } catch (e) {
+        pos = 0;
+      }
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return s.label;
+    }
+    return '';
+  }
+
   function debounce(fn, ms) {
     let id = null;
     return function (...args) {
@@ -470,7 +554,8 @@
 
   /* ======================= 6. 状态 ======================= */
   let items = [];
-  let showAssistant = false;
+  // v1.3.0：默认连回答一起列出来（跟着时间线分组、回答缩进显示）
+  let showAssistant = true;
   let side = 'right';
   let query = '';
   let activeKey = null;
@@ -480,6 +565,9 @@
   let prefCollapsed = null;
   let lastSignature = '';
   let lastCheapSig = '';
+  // 折叠了哪些时间分组（按标签存，存进 sessionStorage，刷新后还在）
+  let foldedDays = new Set();
+  let foldLoadedFor = '';
   // 补扫过程中让列表跟着长（节流）：长对话要扫半分钟，不能一直空着不更新
   let lastQuietRender = 0;
   // 刷新后补扫：内容常常在 MutationObserver 挂上之前就渲染完，
@@ -627,6 +715,42 @@
   .item.asst .txt { color: var(--muted); font-size: 12px; }
   .txt mark { background: var(--active); color: var(--accent); border-radius: 3px; padding: 0 1px; font-weight: 600; }
   .meta { color: var(--muted); font-size: 11px; margin-top: 1px; }
+
+  /* —— 时间线分组（一级）+ 回答缩进（v1.3.0） —— */
+  .grp { list-style: none; }
+  .grphead {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; padding: 5px 6px; margin-top: 2px;
+    border-radius: 7px; text-align: left;
+    color: var(--muted); font-size: 11px; font-weight: 600;
+    letter-spacing: .3px; cursor: pointer;
+    position: sticky; top: 0; z-index: 2;
+    background: var(--bg);
+  }
+  .grphead:hover { background: var(--hover); color: var(--fg); }
+  .grphead:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .grphead .caret {
+    width: 10px; flex: 0 0 auto; font-size: 9px; opacity: .8;
+    transition: transform .15s ease;
+  }
+  .grp.folded .grphead .caret { transform: rotate(-90deg); }
+  .grphead .glabel { flex: 0 0 auto; }
+  .grphead .gmeta {
+    flex: 0 0 auto; font-weight: 400; opacity: .8;
+    background: var(--hover); border-radius: 20px; padding: 0 6px;
+  }
+  .grphead .gline { flex: 1 1 auto; height: 1px; background: var(--line); }
+  .grpbody { list-style: none; margin: 0; padding: 0; }
+  .grp.folded .grpbody { display: none; }
+  /* 回答：整体缩进约两个字 + 左侧引导线，和提问一眼分得开 */
+  .item.asst {
+    margin-left: 1.1em;
+    padding-left: calc(4px + .9em);
+    border-left: 2px solid var(--line);
+    border-radius: 0 8px 8px 0;
+  }
+  .item.asst:hover { border-left-color: var(--muted); }
+  .item.asst.active { border-left-color: var(--accent); }
   .empty { padding: 22px 14px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.7; }
   .foot { border-top: 1px solid var(--line); flex: 0 0 auto; }
   .adv { padding: 6px 10px 8px; }
@@ -891,6 +1015,7 @@
       sweepRound = 0;
       sweepResume = null;
       sweepNextAt = 0;
+      daySepCache = { at: 0, seps: [] };
     }
     archiveHref = location.href;
 
@@ -910,6 +1035,12 @@
       it.idx = indexOfNode(it.el);
     });
 
+    // 时间线归属：页面上有日期分隔条就按它分组，没有就退回时间戳里的「月/日」
+    const seps = daySeps();
+    for (const it of all) {
+      it.day = seps.length ? dayLabelFor(it.el, seps) : dayFromTime(it.time);
+    }
+
     // 并入档案：本轮看到的更新，没看到的保留（说明被虚拟列表卸载了）
     const batchKeys = all.map((i) => i.key);
     const inBatch = new Set(batchKeys);
@@ -919,6 +1050,7 @@
         prev.raw = it.raw;
         prev.text = it.text;
         if (it.time) prev.time = it.time;
+        if (it.day) prev.day = it.day;
         prev.el = it.el;
         if (it.idx != null) prev.idx = it.idx;
         prev.ratio = ratioOf(it.el);
@@ -957,6 +1089,14 @@
 
     items = order.map((k) => archive.get(k)).filter(Boolean);
 
+    // 日期继承：虚拟列表会把日期分隔条一起卸载，那几条就会「没日期」，
+    // 按目录顺序沿用上一条已知日期，时间线才不会被切成碎块
+    let carryDay = '';
+    for (const it of items) {
+      if (it.day) carryDay = it.day;
+      else if (carryDay) it.day = carryDay;
+    }
+
     // 重新编号：DOM 序号在虚拟列表下不可靠，改成按合并后的顺序数第几次提问
     let q = 0;
     items.forEach((it, i) => {
@@ -971,6 +1111,8 @@
       .map(
         (i) =>
           i.key +
+          '|' +
+          (i.day || '') +
           '|' +
           (i.role === 'user' ? i.text.slice(0, 40) : showAssistant ? i.raw.length : '')
       )
@@ -1077,6 +1219,9 @@
     const sc = findScroller(anyEl);
     if (!sc) return;
     const c = coverage(sc);
+
+    // 一共就一两屏的对话不会有虚拟列表，别白滚一趟
+    if (c.scrollHeight < c.view * 2) return;
 
     // ② 位置信号（最可靠）：已挂载条目没铺满容器，上面或下面还留着高度
     if (stillIncomplete(c)) {
@@ -1377,12 +1522,12 @@
             grew: r.grew,
             done: r.done
           });
-          if (r.moved >= 3 && r.grew > bestGrew) {
+          if ((r.moved >= 3 || (r.moved >= 1 && r.done)) && r.grew > bestGrew) {
             best = sc;
             bestGrew = r.grew;
             bestRes = r;
           }
-          if (r.moved >= 3 && r.grew >= 2) {
+          if ((r.moved >= 3 || (r.moved >= 1 && r.done)) && r.grew >= 2) {
             best = sc;
             bestRes = r;
             break;
@@ -1420,7 +1565,8 @@
       if (worked && !resume) sweepCover.fromTop = true;
       if (worked && passDone) sweepCover.done = true;
       const holeCount = (archiveIndices() || { holes: [] }).holes.length;
-      const gaps = !(sweepCover.fromTop && sweepCover.done) || holeCount > 0;
+      // 只有「确实漏了」才提示：序号有洞，或者从顶扫到底中途被打断
+      const gaps = holeCount > 0 || (sweepCover.fromTop && !sweepCover.done);
       const canRetryHole = holeCount > 0 && sweepRound < 3;
       const carryOn =
         !aborted &&
@@ -1533,6 +1679,7 @@
           t: (it.text || '').slice(0, 400),
           w: (it.raw || '').slice(0, 2000),
           m: it.time || '',
+          d: it.day || '',
           i: it.idx == null ? null : it.idx,
           a: Math.round((it.ratio || 0) * 1e4) / 1e4
         }));
@@ -1561,6 +1708,7 @@
         text: r.t || '',
         raw: r.w || '',
         time: r.m || '',
+        day: r.d || '',
         idx: r.i == null ? null : r.i,
         ratio: r.a || 0,
         el: null,
@@ -1606,6 +1754,86 @@
     return out;
   }
 
+  /* —— 时间分组的折叠状态：按会话存 sessionStorage，刷新后还在 —— */
+  function foldKey() {
+    return 'co:fold:' + location.pathname;
+  }
+  let foldAutoDone = false;
+
+  function loadFolds() {
+    if (foldLoadedFor === location.pathname) return;
+    foldLoadedFor = location.pathname;
+    foldAutoDone = false;
+    foldedDays = new Set();
+    try {
+      const raw = sessionStorage.getItem(foldKey());
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          arr.forEach((d) => {
+            if (typeof d === 'string' && d) foldedDays.add(d);
+          });
+        }
+      }
+    } catch (e) {
+      /* 读不到就当没折叠 */
+    }
+  }
+
+  function saveFolds() {
+    try {
+      sessionStorage.setItem(foldKey(), JSON.stringify(Array.from(foldedDays)));
+    } catch (e) {
+      /* 存不下不影响使用 */
+    }
+  }
+
+  // 折叠 / 展开一组：只改这一组的 DOM，不整表重绘（滚动位置不会跳）
+  function toggleFold(label) {
+    if (!label) return;
+    // 现在是展开的 → 这次点就收起；已经在折叠集合里 → 这次点就展开
+    const fold = !foldedDays.has(label);
+    if (fold) foldedDays.add(label);
+    else foldedDays.delete(label);
+    saveFolds();
+    const grp = Array.from($list.querySelectorAll('.grp')).find((g) => g.dataset.day === label);
+    if (!grp) return;
+    grp.classList.toggle('folded', fold);
+    const head = grp.querySelector('.grphead');
+    if (head) head.setAttribute('aria-expanded', String(!fold));
+  }
+
+  // 把可见条目按日期切成时间线分组（文档顺序就是时间顺序）
+  function buildGroups(list) {
+    const groups = [];
+    let cur = null;
+    for (const it of list) {
+      const label = it.day || '';
+      if (!cur || cur.label !== label) {
+        cur = { label, items: [], rounds: 0 };
+        groups.push(cur);
+      }
+      cur.items.push(it);
+      if (it.role === 'user') cur.rounds += 1;
+    }
+    return groups;
+  }
+
+  function itemHtml(it) {
+    const isUser = it.role === 'user';
+    const idx = isUser ? String(it.q) : '答';
+    const meta = it.time || '';
+    return `<li class="item${isUser ? ' user' : ' asst'}${it.key === activeKey ? ' active' : ''}" data-key="${esc(
+      it.key
+    )}" title="${esc(it.text.slice(0, 300))}" tabindex="0" role="button">
+      <span class="idx">${esc(idx)}</span>
+      <span class="body">
+        <span class="txt">${highlightText(it.text, query)}</span>
+        ${meta ? `<span class="meta">${esc(meta)}</span>` : ''}
+      </span>
+    </li>`;
+  }
+
   function render() {
     const list = visibleItems();
     const userTotal = items.filter((i) => i.role === 'user').length;
@@ -1623,22 +1851,40 @@
       return;
     }
 
-    const html = list
-      .map((it) => {
-        const isUser = it.role === 'user';
-        const idx = isUser ? String(it.q) : '答';
-        const meta = [isUser ? '' : `回答 ${it.q}`, it.time].filter(Boolean).join(' · ');
-        return `<li class="item${isUser ? ' user' : ' asst'}${it.key === activeKey ? ' active' : ''}" data-key="${esc(
-          it.key
-        )}" title="${esc(it.text.slice(0, 300))}" tabindex="0" role="button">
-          <span class="idx">${esc(idx)}</span>
-          <span class="body">
-            <span class="txt">${highlightText(it.text, query)}</span>
-            ${meta ? `<span class="meta">${esc(meta)}</span>` : ''}
-          </span>
+    loadFolds();
+    const groups = buildGroups(list);
+
+    // 分组多的时候（跨好几天）先把旧的收起来，只留最近一组展开，
+    // 不然一进面板就是几百条。用户展开过就尊重用户的选择。
+    if (!query && !foldAutoDone && !foldedDays.size && groups.length > 3) {
+      foldAutoDone = true;
+      for (let i = 0; i < groups.length - 1; i += 1) {
+        if (groups[i].label) foldedDays.add(groups[i].label);
+      }
+      saveFolds();
+    }
+
+    const html = groups
+      .map((g) => {
+        const body = g.items.map(itemHtml).join('');
+        // 没有任何日期信息时保持原来的平铺列表，不留一个空分组头
+        if (!g.label) return body;
+        // 搜索时全部展开，否则「命中了却看不见」会让人以为没搜到
+        const folded = !query && foldedDays.has(g.label);
+        return `<li class="grp${folded ? ' folded' : ''}" data-day="${esc(g.label)}">
+          <div class="grphead" role="button" tabindex="0" data-act="fold" data-day="${esc(
+            g.label
+          )}" aria-expanded="${!folded}" title="折叠 / 展开「${esc(g.label)}」">
+            <span class="caret">▾</span>
+            <span class="glabel">${esc(g.label)}</span>
+            <span class="gmeta">${g.rounds ? `${g.rounds} 轮` : `${g.items.length} 条`}</span>
+            <span class="gline"></span>
+          </div>
+          <ul class="grpbody">${body}</ul>
         </li>`;
       })
       .join('');
+
     $list.innerHTML = html;
     $list.scrollTop = keepScroll;
   }
@@ -1686,10 +1932,19 @@
   function setActive(key, scrollInList) {
     activeKey = key;
     $list.querySelectorAll('.item').forEach((li) => li.classList.toggle('active', li.dataset.key === key));
-    if (scrollInList) {
-      const cur = $list.querySelector('.item.active');
-      if (cur) cur.scrollIntoView({ block: 'nearest' });
+    const cur = $list.querySelector('.item.active');
+    // 跳到折叠分组里的条目：先把那一组展开，不然点完什么也看不见
+    if (cur && scrollInList) {
+      const grp = cur.closest('.grp');
+      if (grp && grp.classList.contains('folded')) {
+        foldedDays.delete(grp.dataset.day);
+        saveFolds();
+        grp.classList.remove('folded');
+        const head = grp.querySelector('.grphead');
+        if (head) head.setAttribute('aria-expanded', 'true');
+      }
     }
+    if (scrollInList && cur) cur.scrollIntoView({ block: 'nearest' });
   }
 
   function jumpTo(key) {
@@ -1806,11 +2061,19 @@
     const stamp = `${ts.getFullYear()}-${p(ts.getMonth() + 1)}-${p(ts.getDate())} ${p(ts.getHours())}:${p(ts.getMinutes())}`;
     let md = `# ${document.title || '对话记录'}\n\n> 来源：${location.href}\n> 导出时间：${stamp}\n\n`;
     if (!items.length) return md + '_（未识别到内容）_\n';
+    let curDay = null;
     items.forEach((it) => {
+      const day = it.day || '';
+      if (day && day !== curDay) {
+        curDay = day;
+        md += `\n## ${day}\n`;
+      }
+      const q = `${day ? '###' : '##'} Q${it.q}${it.time ? ` · ${it.time}` : ''}`;
+      const a = `${day ? '####' : '###'} A${it.q}${it.time ? ` · ${it.time}` : ''}`;
       if (it.role === 'user') {
-        md += `\n---\n\n## Q${it.q}${it.time ? ` · ${it.time}` : ''}\n\n${it.raw}\n`;
+        md += `\n---\n\n${q}\n\n${it.raw}\n`;
       } else {
-        md += `\n### A${it.q}${it.time ? ` · ${it.time}` : ''}\n\n${it.raw}\n`;
+        md += `\n${a}\n\n${it.raw}\n`;
       }
     });
     return md;
@@ -1895,6 +2158,7 @@
         writeDiag({ phase: 'manual' });
         toast(`已重新扫描：${items.filter((i) => i.role === 'user').length} 个提问`);
       }
+      if (act === 'fold') toggleFold(btn.dataset.day);
       if (act === 'export') exportMarkdown();
       if (act === 'asst') {
         showAssistant = !showAssistant;
@@ -1913,8 +2177,27 @@
     if (li) jumpTo(li.dataset.key);
   });
 
-  // 键盘操作：Tab 到某条后 Enter / 空格即可跳转（与鼠标点击等效）
+  // 键盘操作：Tab 到某条后 Enter / 空格即可跳转；分组标题上 Enter 折叠/展开；
+  // ↑↓ 在可见条目之间移动（长列表不用一直摸鼠标滚轮）
   $list.addEventListener('keydown', (e) => {
+    const head = e.target.closest('.grphead');
+    if (head && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      toggleFold(head.dataset.day);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const all = Array.from($list.querySelectorAll('.item, .grphead')).filter(
+        (el) => el.offsetParent !== null
+      );
+      const at = all.indexOf(e.target.closest('.item, .grphead'));
+      if (at < 0) return;
+      const next = all[at + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (!next) return;
+      e.preventDefault();
+      next.focus();
+      return;
+    }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const li = e.target.closest('.item');
     if (!li) return;
@@ -2068,7 +2351,7 @@
     Promise.all([
       store.get('pref:collapsed', false),
       store.get('pref:side', 'right'),
-      store.get('pref:showAssistant', false),
+      store.get('pref:showAssistant', true),
       store.get(`sel:${HOSTKEY}`, null)
     ]).then(([collapsed, s, asst, sel]) => {
       prefCollapsed = collapsed;

@@ -33,7 +33,7 @@ async function runCase(browser, name, url, mockFile, shot) {
       has: sr.querySelector('.app').dataset.has,
       auto: !sr.querySelector('.auto').hidden,
       count: sr.querySelector('.count').textContent,
-      items: [...sr.querySelectorAll('.item')].map((li) => li.querySelector('.idx').textContent + '|' + li.querySelector('.txt').textContent.slice(0, 22))
+      items: [...sr.querySelectorAll('.item.user')].map((li) => li.querySelector('.idx').textContent + '|' + li.querySelector('.txt').textContent.slice(0, 22))
     };
   });
 
@@ -42,13 +42,13 @@ async function runCase(browser, name, url, mockFile, shot) {
   if (info.mounted && info.items && info.items.length) {
     jump = await page.evaluate(async () => {
       const sr = document.getElementById('chat-outline-host').shadowRoot;
-      sr.querySelectorAll('.item')[0].click();
+      sr.querySelectorAll('.item.user')[0].click();
       await new Promise((r) => setTimeout(r, 700));
       sr.querySelector('[data-act="asst"]').click();
       await new Promise((r) => setTimeout(r, 200));
       return {
         active: (sr.querySelector('.item.active') || {}).dataset?.key || null,
-        n: sr.querySelectorAll('.item').length
+        n: sr.querySelectorAll('.item.user').length
       };
     });
   }

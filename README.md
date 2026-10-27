@@ -13,19 +13,20 @@
 
 *点第 3 条提问 → 页面平滑滚到那条消息，闪一圈绿色描边（截图来自本地仿真页面，演示数据）*
 
-![显示 AI 回答](docs/demo-answers.png)
+![时间线分组与回答缩进](docs/demo-timeline.png)
 
-*点「答」把 AI 的回答也列进来，每条带 `回答 N · 时间` 的灰色小字*
+*按天分组（一级可折叠）→ 每组下面是提问（编号）与回答（缩进 + 左侧引导线）；点「答」可只留提问*
 
 ---
 
 ## 功能
 
 - **提问清单** —— 把整段对话里的提问按 1、2、3… 列出来，显示前两行
+- **时间线分组** —— 按页面上的日期分隔条（今天 / 昨天 / 10月24日）分成一级标题，点标题即折叠；没有日期信息时退回用时间戳里的「月/日」，实在没有就不分组，不留空标题
+- **回答也列出来** —— 每条提问下面跟一条回答，缩进两个字 + 左侧引导线，和提问一眼分得开；想看纯清单就点「答」关掉
 - **点击跳转** —— 平滑滚动到对应消息，并闪一圈绿色描边，一眼定位
 - **滚动跟随** —— 你在页面上滚到哪儿，目录就高亮哪一问
-- **搜索过滤** —— 输入关键词即时筛选并高亮命中词，回车直接跳到第一条命中
-- **显示 AI 回答** —— 点「答」把回答条目（含时间戳）也列进来
+- **搜索过滤** —— 输入关键词即时筛选并高亮命中词，回车直接跳到第一条命中；命中的分组会自动展开
 - **导出 Markdown** —— 把问答全文导出成 `.md`，方便存档、写周报、贴进笔记
 - **自动适配深浅色** —— 跟随页面主题，面板不刺眼
 - **完全本地** —— 没有任何网络请求，不发一个字节出去
@@ -54,9 +55,10 @@
 | --- | --- |
 | `Alt + Q` | 显示 / 收起目录（点工具栏图标也行） |
 | 点列表条目 | 跳转到该消息并高亮 |
-| 序号徽章 | 第 N 个提问；打开「答」后 AI 回答显示为 `答` |
+| 序号徽章 | 第 N 个提问；AI 回答显示为 `答` |
+| 分组标题 | 点一下折叠 / 展开这一天；折叠状态按会话记住，刷新后还在 |
 | 搜索框 | 中文/英文关键词（大小写不敏感），命中词高亮，回车跳第一条 |
-| 键盘操作 | Tab 聚焦条目后 Enter / 空格跳转，与点击等效 |
+| 键盘操作 | Tab 聚焦后 Enter / 空格跳转（分组标题上是折叠），`↑` `↓` 在条目间移动 |
 | 滚动页面 | 目录自动高亮当前阅读位置 |
 | `答` | 显示 / 隐藏 AI 回答条目 |
 | `⇄` | 面板换到屏幕另一侧 |
@@ -124,6 +126,28 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
 ## 更新日志 / Changelog
+
+### v1.3.0 — 时间线分组 + 回答缩进 / Timeline groups and indented answers
+
+**新功能 / Features**
+
+| 中文 | English |
+| --- | --- |
+| 目录按**时间线分组**：从页面上找出日期分隔条（今天 / 昨天 / 10月24日），当作一级标题，每组显示「N 轮」，点标题折叠 / 展开 | The outline is now grouped by **timeline**: date separators on the page (Today / Yesterday / 24 October) become level-1 headings showing "N rounds", and clicking a heading collapses or expands it |
+| 站点没有日期分隔条时，退回用它给的时间戳折成「M月D日」；两样都没有就不分组，绝不显示空标题 | With no date separators the site timestamps are folded into "M月D日"; with neither, no grouping is shown at all — never an empty heading |
+| **回答默认列出来**（原来要手动点「答」）：每条提问下面跟一条回答，缩进两个字并加一条左侧引导线，提问是编号徽标、回答是「答」徽章 | **Answers are shown by default** (previously behind the "答" toggle): each question is followed by its answer, indented by two characters with a left guide line — numbered badge for questions, "答" badge for answers |
+| 折叠状态按会话记住（`sessionStorage`），刷新后还在；跨 4 组以上时自动只展开最近一组，其余先收起 | Collapse state is remembered per conversation (`sessionStorage`) and survives a reload; with more than three groups only the most recent one starts expanded |
+| 搜索时自动展开命中的分组（否则「命中了却看不见」）；清空搜索恢复原来的折叠 | Searching auto-expands groups with hits and restores the previous folding when the query is cleared |
+| 点回答条目也能跳转并高亮；跳到折叠组里的条目会自动展开那一组 | Answers are clickable too; jumping into a collapsed group expands it first |
+| 键盘：分组标题上 Enter / 空格折叠，`↑` `↓` 在条目间移动 | Keyboard: Enter / Space to fold a heading, `↑` `↓` to move between entries |
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 虚拟列表把日期分隔条一起卸载时，那几条会「没日期」把时间线切碎 —— 现在按目录顺序继承上一条已知日期 | When the virtual list unmounts a date separator, the following entries lost their date and split the timeline; they now inherit the last known date in document order |
+| 一键面就误报「页面可能还有没加载出来的内容」：短对话（不到两屏）本来就不会虚拟化，现在直接跳过补扫；判定「收全了没有」也只认硬证据（序号有洞 / 从顶扫到底被打断） | A false "some content may not be loaded" toast appeared on open; conversations shorter than two screens are no longer swept, and "finished" now requires hard evidence (index gaps, or a pass interrupted before the bottom) |
+| 回答条目的灰色小字原来重复显示「回答 N」，和「答」徽章说同一件事 —— 现在只留时间 | The answer meta line used to repeat "回答 N" next to the "答" badge; it now shows only the timestamp |
 
 ### v1.2.6 — 长对话一趟扫不完就接着扫 / Sweep resumes instead of giving up
 

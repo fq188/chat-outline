@@ -25,7 +25,7 @@ function check(name, cond, extra) {
 const clickItem = (page, i) =>
   page.evaluate((i) => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    sr.querySelectorAll('.item')[i].click();
+    sr.querySelectorAll('.item.user')[i].click();
   }, i);
 const outlineOf = (page, testid) =>
   page.evaluate(
@@ -70,7 +70,7 @@ const outlineOf = (page, testid) =>
   // ---------- 3. 键盘 Enter / 空格 ----------
   const kb = await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    const items = sr.querySelectorAll('.item');
+    const items = sr.querySelectorAll('.item.user');
     const third = items[3];
     third.focus();
     third.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

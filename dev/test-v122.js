@@ -25,7 +25,7 @@ function check(name, cond, extra) {
 const textsOf = (page) =>
   page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    return Array.from(sr.querySelectorAll('.item .txt')).map((n) => (n.innerText || '').trim());
+    return Array.from(sr.querySelectorAll('.item.user .txt')).map((n) => (n.innerText || '').trim());
   });
 
 (async () => {
@@ -58,7 +58,7 @@ const textsOf = (page) =>
   // 点击纯图片条目应能跳到对应消息并高亮
   await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    sr.querySelectorAll('.item')[1].click();
+    sr.querySelectorAll('.item.user')[1].click();
   });
   await page.waitForTimeout(400);
   const outline = await page.evaluate(() => {
@@ -74,7 +74,7 @@ const textsOf = (page) =>
     input.value = '图片';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     return new Promise((res) =>
-      setTimeout(() => res(Array.from(sr.querySelectorAll('.item .txt')).map((n) => (n.innerText || '').trim())), 300)
+      setTimeout(() => res(Array.from(sr.querySelectorAll('.item.user .txt')).map((n) => (n.innerText || '').trim())), 300)
     );
   });
   check('搜索「图片」命中 2 条', hits.length === 2, JSON.stringify(hits));

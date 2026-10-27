@@ -35,7 +35,7 @@ const log = (...a) => console.log(...a);
         open: sr.querySelector('.app').dataset.open,
         theme: sr.querySelector('.app').dataset.theme,
         count: sr.querySelector('.count').textContent,
-        items: [...sr.querySelectorAll('.item')].map(
+        items: [...sr.querySelectorAll('.item.user')].map(
           (li) => li.querySelector('.idx').textContent + '|' + li.querySelector('.txt').textContent.slice(0, 16)
         ),
         active: (sr.querySelector('.item.active') || {}).dataset?.key || null,
@@ -54,7 +54,7 @@ const log = (...a) => console.log(...a);
   // 点击第 3 个提问
   await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;
-    sr.querySelectorAll('.item')[2].click();
+    sr.querySelectorAll('.item.user')[2].click();
   });
   await page.waitForTimeout(900);
   const s2 = await snap();
