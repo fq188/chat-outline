@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2.1)
+ * 对话目录 · Chat Outline  (v1.2.2)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -196,7 +196,7 @@
     if (!nodes || !nodes.length || nodes.length > 1000) return false;
     const visible = nodes.filter(isVisible);
     if (!visible.length) return false;
-    const texts = visible.map((n) => (n.innerText || '').trim()).filter(Boolean);
+    const texts = visible.map((n) => (n.innerText || '').trim() || mediaLabel(n)).filter(Boolean);
     if (texts.length < Math.max(1, Math.ceil(visible.length * 0.6))) return false;
     const avg = texts.reduce((a, t) => a + t.length, 0) / texts.length;
     if (avg < 2) return false;
@@ -234,6 +234,43 @@
       .replace(/^(You said|你说|您说)\s*[:：]\s*/i, '');
   }
 
+  // 纯图片 / 视频 / 附件消息没有文字，innerText 取不到东西。
+  // 给它们合成一个占位标签，否则整条提问在目录里会凭空消失。
+  function mediaLabel(node) {
+    if (!node || !node.querySelectorAll) return '';
+    const parts = [];
+    try {
+      const imgs = Array.prototype.filter.call(node.querySelectorAll('img'), (im) => {
+        const w = im.naturalWidth || parseInt(im.getAttribute('width') || '0', 10) || 0;
+        const h = im.naturalHeight || parseInt(im.getAttribute('height') || '0', 10) || 0;
+        const alt = (im.getAttribute('alt') || '').trim();
+        // 太小的是图标/头像/表情，不算消息内容；没尺寸信息时靠 alt 判断
+        if ((w && w < 40) || (h && h < 40)) return false;
+        if (!w && !h && !alt) return false;
+        const cls = typeof im.className === 'string' ? im.className : '';
+        if (/avatar|emoji|icon|logo|badge|spinner/i.test(cls)) return false;
+        return true;
+      });
+      if (imgs.length) {
+        const alt = (imgs[0].getAttribute('alt') || '').trim().replace(/\s+/g, ' ');
+        const generic = !alt || /^(image|picture|photo|uploaded image|图片|已上传的图片|图像)$/i.test(alt);
+        const one = generic ? '图片' : `图片：${alt.slice(0, 24)}`;
+        parts.push(imgs.length > 1 ? `${one} ×${imgs.length}` : one);
+      }
+      if (node.querySelector('video')) parts.push('视频');
+      if (node.querySelector('audio')) parts.push('语音');
+      if (
+        !parts.length &&
+        node.querySelector('[data-testid*="file"], [class*="attachment"], [class*="file-card"]')
+      ) {
+        parts.push('附件');
+      }
+    } catch (e) {
+      /* 忽略：拿不到就当没有 */
+    }
+    return parts.length ? `[${parts.join(' · ')}]` : '';
+  }
+
   // 同一节点内容没变就不重复克隆解析（长对话 + 流式输出时省很多）
   const rawCache = new WeakMap();
   function cleanRawCached(node) {
@@ -241,7 +278,8 @@
       const len = (node.textContent || '').length;
       const hit = rawCache.get(node);
       if (hit && hit.len === len) return hit.raw;
-      const raw = cleanRaw(node);
+      let raw = cleanRaw(node);
+      if (!raw) raw = mediaLabel(node);
       rawCache.set(node, { len, raw });
       return raw;
     } catch (e) {
@@ -442,6 +480,12 @@
   let prefCollapsed = null;
   let lastSignature = '';
   let lastCheapSig = '';
+  // 刷新后补扫：内容常常在 MutationObserver 挂上之前就渲染完，
+  // 之后页面不再变动，只等 DOM 变动就会一直空着
+  let retryTimer = null;
+  let retryCount = 0;
+  // 偏好读取完成后才允许自动展开，避免刷新瞬间先弹一下面板再收起
+  let bootReady = false;
 
   /* ======================= 7. 样式 ======================= */
   const CSS = `
@@ -688,7 +732,10 @@
     for (const n of clean) {
       const el = (container ? container(n) : n) || n;
       const tn = (textRoot ? textRoot(n) : n) || n;
-      const raw = cleanRawCached(tn);
+      let raw = cleanRawCached(tn);
+      // 文本节点可能只是消息的一部分（如 Gemini 的 .query-text），
+      // 拿不到文字就回退到整条消息里找图片/附件
+      if (!raw && el && el !== tn) raw = mediaLabel(el);
       if (!raw) continue;
       out.push({ el, role, raw, text: raw.replace(/\s+/g, ' '), time: pickTime(el) });
     }
@@ -704,6 +751,7 @@
       app.dataset.has = '0';
       $count.textContent = '0';
       render();
+      scheduleRetry();
       return items;
     }
 
@@ -765,7 +813,18 @@
 
     if (!openedOnce && items.some((i) => i.role === 'user')) {
       openedOnce = true;
-      if (prefCollapsed !== true) setOpen(true);
+      if (bootReady && prefCollapsed !== true) setOpen(true);
+    }
+
+    // 还没有任何提问 → 可能是页面内容晚于 observer 渲染，安排补扫
+    if (!items.some((i) => i.role === 'user')) {
+      scheduleRetry();
+    } else {
+      retryCount = 0;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
     }
     return items;
   }
@@ -1094,14 +1153,28 @@
   const store = {
     get(key, def) {
       return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          resolve(v);
+        };
+        // storage 回调可能永远不返回（扩展上下文失效等），
+        // 不能让它卡住初始化——否则观察器和首次扫描都起不来
+        const timer = setTimeout(() => finish(def), 800);
         try {
-          if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return resolve(def);
+          if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+            clearTimeout(timer);
+            return finish(def);
+          }
           chrome.storage.local.get([key], (r) => {
             void chrome.runtime.lastError;
-            resolve(r && r[key] !== undefined ? r[key] : def);
+            clearTimeout(timer);
+            finish(r && r[key] !== undefined ? r[key] : def);
           });
         } catch (e) {
-          resolve(def);
+          clearTimeout(timer);
+          finish(def);
         }
       });
     },
@@ -1128,6 +1201,21 @@
     if (!document.hidden) scheduleScan();
   });
 
+  // 目录为空时的补扫：间隔递减后拉长，最多 ~30 秒，之后交给 DOM 变动
+  const RETRY_DELAYS = [300, 600, 1000, 1500, 2000, 3000, 3000, 4000, 5000, 5000, 6000];
+  function scheduleRetry() {
+    if (retryTimer || retryCount >= RETRY_DELAYS.length) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      retryCount += 1;
+      if (document.hidden) {
+        scheduleRetry();
+        return;
+      }
+      scan(true);
+    }, RETRY_DELAYS[retryCount]);
+  }
+
   function boot() {
     mount();
     applyTheme();
@@ -1138,6 +1226,10 @@
         /* ignore */
       }
     }
+
+    // 先挂观察器、先扫一次：偏好读取失败或超时也不能让目录起不来
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    scan(true);
 
     Promise.all([
       store.get('pref:collapsed', false),
@@ -1158,9 +1250,24 @@
       $fUser.placeholder = (SITE && SITE.user) || '例：.user-message';
       $fAsst.placeholder = (SITE && SITE.assistant) || '例：.assistant-message';
 
+      bootReady = true;
       scan(true);
       render();
-      mo.observe(document.documentElement, { childList: true, subtree: true });
+      if (items.some((it) => it.role === 'user')) {
+        if (prefCollapsed !== true && app.dataset.open !== 'true') setOpen(true);
+      } else {
+        scheduleRetry();
+      }
+    });
+
+    // 刷新 / 从往返缓存恢复 / 资源加载完成，都补一次扫描
+    if (document.readyState === 'complete') {
+      scheduleRetry();
+    } else {
+      window.addEventListener('load', () => scan(true), { once: true });
+    }
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) scan(true);
     });
 
     // SPA 路由切换：包裹 history API + popstate/hashchange 做即时感知，

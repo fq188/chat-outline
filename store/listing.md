@@ -104,6 +104,18 @@ Privacy: 100% local — no network requests, no data collection. Open source: ht
 
 本扩展无需账号、无付费功能、无后端服务。测试方法：打开 https://chatgpt.com （或 manifest.json 中 matches 列出的任一站点）并进行任意对话，页面右侧会出现「目录」悬浮标签，点击或按 Alt+Q 打开面板，即可看到提问列表；点击条目跳转，点 ⤓ 导出 Markdown。扩展仅申请 storage 权限，用于保存界面偏好；content script 只在 manifest 列出的对话站点注入，不修改页面内容、不读取账号数据。全部识别在本地完成，无网络请求。
 
+## 本次更新内容（Release notes，v1.2.2）
+
+> Partner Center 更新提交页的「此版本的新增内容」字段，按语言分别填写。v1.2.2 上传时会取代排队中的 1.2.1 提交。
+
+**中文（zh-CN）**
+
+修复两个影响使用的问题：只发图片、不打字提问时，这一问原先不会出现在目录里，现在会显示成「[图片]」占位条目（带文件名的显示「[图片：文件名]」，多条图片显示「[图片 ×2]」），视频、语音、附件同理。另外，刷新页面后目录可能一直是空的，需要手动滚动才恢复——原因是目录初始化排在偏好读取之后，而浏览器在某些情况下不会回调读取结果；现在改为先开始识别、再读偏好，并对读取加了超时兜底。针对聊天页面骨架屏较慢、消息晚于首次渲染才出现的情况，新增了从 300 毫秒到 6 秒、约 30 秒的退避补扫，并在页面完全加载和从缓存恢复时各补扫一次，目录会自己补齐。
+
+**English (en-US)**
+
+Two fixes that affected everyday use: a prompt that was only an image (no text) used to be missing from the outline — it now appears as a "[Image]" entry (with a filename when available, e.g. "[Image: shot.png]", and "×2" for multiple images), and the same applies to video, voice and file attachments. Second, the outline could stay empty after a page refresh until you scrolled — initialization was queued behind the preferences read, which the browser does not always call back; detection now starts first and the preferences read has a timeout fallback. For chat pages whose skeleton renders slowly and whose messages appear after the first paint, a backoff re-scan (300 ms up to 6 s, roughly 30 seconds), plus one extra scan on full load and on back-forward cache restore, fills the outline in automatically.
+
 ## 本次更新内容（Release notes，v1.2.1）
 
 > Partner Center 更新提交页的「此版本的新增内容」字段，按语言分别填写。
@@ -118,15 +130,16 @@ Two fixes: the green highlight ring could linger after repeated jumps to the sam
 
 ## 上架步骤（Partner Center）
 
-### 版本更新（v1.2.0 → v1.2.1）
+### 版本更新（v1.2.0 → v1.2.2）
 
 1. 用注册扩展的 Microsoft 账号登录 https://partner.microsoft.com/dashboard/microsoftedge/overview
-2. 在扩展列表点「对话目录 · Chat Outline」→「更新」→「包」页上传 `_dist/chat-outline-v1.2.1.zip`
+2. 在扩展列表点「对话目录 · Chat Outline」→「更新」→「包」页上传 `_dist/chat-outline-v1.2.2.zip`
 3. 「商店一览」页把上面「本次更新内容」分别填进中文 / 英文语言条目
 4. 确认「属性」「可用性」不变，点「发布」提交审核
-5. 提交后 `manifest.version` 必须大于线上版本（1.2.1 > 1.2.0，已满足）
+5. 提交后 `manifest.version` 必须大于线上版本（1.2.2 > 1.2.0，已满足）
 
 > 若旧版本仍在审核中，提交新版本会取代排队中的提交；以最后一次发布的提交为准。
+> 1.2.1 的包已上传过但未发布，这次传 1.2.2 会把它整份替换掉，无需先撤销。
 
 ### 首次上架（已完成，留档）
 

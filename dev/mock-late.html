@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>延迟渲染测试 - ChatGPT</title>
+<style>
+  body { margin: 0; background: #fff; color: #0d0d0d; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 15px; line-height: 1.72; }
+  .main { max-width: 760px; padding: 26px 32px 60vh; margin: 0 350px 0 auto; }
+  article.turn { margin: 22px 0; }
+  .user-row { display: flex; justify-content: flex-end; padding-left: 50px; }
+  .user-bubble { background: #f4f4f4; border-radius: 20px; padding: 10px 17px; }
+  .asst-body { margin-top: 8px; }
+</style>
+</head>
+<body>
+<main class="main" id="root">
+  <div class="skeleton">正在加载对话…</div>
+</main>
+<script>
+  // 模拟真实站点的「骨架 → 数据到位后整体渲染」：
+  // 首屏没有任何消息，1.8s 后一次性插入完整对话
+  setTimeout(function () {
+    var root = document.getElementById('root');
+    root.innerHTML =
+      '<article class="turn" data-testid="conversation-turn-1">' +
+        '<div class="user-row" data-message-author-role="user">' +
+          '<div class="user-bubble">刷新之后目录应该自动出来</div>' +
+        '</div>' +
+      '</article>' +
+      '<article class="turn" data-testid="conversation-turn-2">' +
+        '<div class="asst-body" data-message-author-role="assistant">' +
+          '<p>是的，这条回答也在。</p>' +
+        '</div>' +
+      '</article>' +
+      '<article class="turn" data-testid="conversation-turn-3">' +
+        '<div class="user-row" data-message-author-role="user">' +
+          '<div class="user-bubble">第二条提问也要在列表里</div>' +
+        '</div>' +
+      '</article>';
+  }, 1800);
+</script>
+</body>
+</html>

@@ -125,6 +125,24 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.2.2 — 图片消息与刷新后空目录 / Image-only prompts & empty outline after reload
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 只发图片、没有文字的提问以前会从目录里消失（文本为空即丢弃）；现在显示为 `[图片]`，图片带文件名时显示 `[图片：xxx.png]`，多张显示 `[图片 ×2]` | Image-only prompts used to vanish from the outline because empty text was dropped. They now show as `[图片]`, as `[图片：name.png]` when a filename is available, and `[图片 ×2]` for multiple images |
+| 刷新页面后目录可能一直空白：初始化与首次扫描原先排在偏好读取之后，`chrome.storage` 回调不返回就再也不会扫描 | The outline could stay empty after a reload: initialisation and the first scan used to run after the preference read, so a storage callback that never returned blocked scanning entirely |
+| 页面内容在 `MutationObserver` 挂载之前就渲染完时，不再依赖「后续还有 DOM 变动」才能出结果 | Content that rendered before the observer was attached no longer depends on a later DOM mutation to show up |
+
+**健壮性 / Robustness**
+
+| 中文 | English |
+| --- | --- |
+| 目录为空时按 300ms → 6s 退避补扫，最多约 30 秒；一有结果立即停止 | When the outline is empty it re-scans with 300 ms → 6 s backoff for up to ~30 s, and stops as soon as items appear |
+| 在 `load`、`pageshow`（往返缓存恢复）时机各补扫一次 | Extra scans on `load` and `pageshow` (back/forward cache restore) |
+| 偏好读取加 800ms 超时兜底，存储异常或扩展上下文失效不再阻塞初始化 | Preference reads now time out after 800 ms, so broken storage or an invalidated extension context no longer blocks initialisation |
+
 ### v1.2.1 — 高亮残留修复与键盘操作 / Highlight fixes & keyboard support
 
 **修复 / Fixes**
