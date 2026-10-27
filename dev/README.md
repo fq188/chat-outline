@@ -19,6 +19,7 @@ node test-v121.js     # v1.2.1 回归：高亮不残留 / 键盘跳转 / 搜索�
 node test-v122.js     # v1.2.2 回归：纯图片提问进目录 / alt 命名 / 图片+文字不叠加 / 图片条目跳转
 node test-refresh.js  # v1.2.2 回归：刷新后自动恢复 / 骨架延迟渲染补扫 / 存储回调卡住仍能加载
 node test-v123.js     # v1.2.3 回归：虚拟列表全量补扫 / 编号连续 / 滚远后条目不丢 / 点击未渲染条目
+node test-v124.js     # v1.2.4 回归：慢渲染(250ms)仍收全 / 刷新走缓存 / 换会话不串场
 node e2e.js           # 用 --load-extension 真实加载扩展，验证 manifest 与注入
 ```
 
@@ -43,6 +44,6 @@ CONTENT_FILE=dev/_old-content.js node dev/test-refresh.js
 | `mock-empty.html` | 无对话内容 → 确认不会误弹面板 |
 | `mock-image.html` | 纯图片提问 / 图片+文字 / 带文件名 alt → 媒体占位标签 `[图片]`、`[图片：x.png]` |
 | `mock-late.html` | 骨架页 1.8s 后才渲染消息 → 退避补扫能否补全 |
-| `mock-virtual.html` | 虚拟列表：60 条消息只挂载视口附近 ~20 条 → 全量补扫与未渲染条目跳转 |
+| `mock-virtual.html` | 虚拟列表：60 条消息只挂载视口附近 ~20 条 → 全量补扫与未渲染条目跳转（`?delay=250` 模拟渲染比滚动慢） |
 
 每个页面通过 `page.route()` 挂到目标域名下（如 `https://chatgpt.com/**`），这样 `location.hostname` 才能命中 `manifest.json` 里的 matches。

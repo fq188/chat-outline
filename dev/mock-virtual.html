@@ -106,6 +106,9 @@
         }
 
         var ticking = false;
+        // ?delay=250 模拟「站点渲染比滚动慢」的虚拟列表：
+        // 滚过去之后要等一会儿才挂上新消息，直接按固定 50ms 采就会漏
+        var DELAY = parseInt(new URLSearchParams(location.search).get('delay') || '0', 10) || 0;
         scroller.addEventListener(
           'scroll',
           function () {
@@ -113,7 +116,8 @@
             ticking = true;
             requestAnimationFrame(function () {
               ticking = false;
-              render();
+              if (DELAY) setTimeout(render, DELAY);
+              else render();
             });
           },
           { passive: true }

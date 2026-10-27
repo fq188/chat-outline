@@ -125,6 +125,25 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.2.4 — 补扫更稳：慢渲染、多滚动容器、会话缓存 / Steadier sweep
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 站点渲染比滚动慢时（超过 50ms）会整段漏掉：补扫原来每步固定等 50ms，现在改成「等 DOM 安静再采」，最多 420ms；到顶部还会多等 1.2 秒，给「异步加载更早的历史」留时间 | Fast sweeps used to skip messages on sites that render slower than the scroll (each step waited a fixed 50 ms). Each step now waits for the DOM to go quiet (up to 420 ms), and the top of the thread gets an extra 1.2 s for sites that fetch older history asynchronously |
+| 「真正在滚的那个容器」不一定是消息最近的祖先：现在逐个尝试候选滚动容器，谁采到更多就用谁 | The element that actually scrolls is not always the nearest ancestor of a message; candidates are now tried in turn and whichever collects more wins |
+| 扫完还有序号缺口时，换一半的步长再走一遍 | When gaps remain after a pass, a second pass with half the step size runs |
+| 刷新后又退回「几条」：目录现在按会话存进 `sessionStorage`，刷新立刻就是完整列表，不必重扫 | After a reload the outline dropped back to a handful of entries; the per-conversation list is now kept in `sessionStorage`, so a reload shows the full outline immediately |
+| 补不齐时会明说「找到 24/30 条」，不再假装成功 | When it still cannot fill the gaps it says so: "found 24 of 30" |
+
+**体验 / Experience**
+
+| 中文 | English |
+| --- | --- |
+| 面板上的 ⟳ 除了重扫，也会触发一次整段补扫 | The ⟳ button now re-scans the whole thread, not just the current DOM |
+| 切换对话不会带出上一段的缓存 | Cached entries never leak across conversations |
+
 ### v1.2.3 — 虚拟列表下也能列出整段对话 / Full outline on virtualized chats
 
 **修复 / Fixes**

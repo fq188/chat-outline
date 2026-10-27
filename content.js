@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2.3)
+ * 对话目录 · Chat Outline  (v1.2.4)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -994,7 +994,10 @@
     }
 
     // 虚拟列表：目录里出现序号缺口（中间几轮被卸载了），补一次全量扫描
-    if (!quiet) maybeSweep();
+    if (!quiet) {
+      saveArchive();
+      maybeSweep();
+    }
     return items;
   }
 
@@ -1027,58 +1030,118 @@
     }, 600);
   }
 
-  // 全量补扫：从头滚到底，每一屏采一次，最后把滚动位置还回去。
-  // 只在「检测到被虚拟化」时跑一次；用户中途滚轮/按键就立刻中止。
-  async function sweep() {
-    if (sweeping) return;
-    const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
-    if (!anyEl) return;
-    const sc = findScroller(anyEl);
-    if (!sc) {
-      sweptOnce = true;
-      return;
-    }
-    const view = sc.clientHeight || 400;
-    if (sc.scrollHeight < view * 1.5) {
-      sweptOnce = true;
-      return;
-    }
+  // —— 补扫（sweep） ——
+  // 1) 逐个试候选滚动容器：不同站点「真正在滚的那个」不一定是最近的祖先
+  // 2) 每一步都等 DOM 安静再采，站点渲染慢于我们的步进时不会漏
+  // 3) 扫完检查「序号缺口」，还有洞就换更细的步长再来一遍
+  // 4) 结果按会话存进 sessionStorage，刷新后立刻就是完整目录
 
-    sweeping = true;
-    sweepAbort = false;
-    // 补扫期间页面自己在滚，别让滚动跟随把高亮乱改
-    suppressSpyUntil = Date.now() + 9000;
+  // 等 DOM 安静下来（最多 maxMs）：React 重渲染、图片撑高、异步补历史都在这里等
+  function settleQuiet(maxMs) {
+    return new Promise((resolve) => {
+      let done = false;
+      let quietTimer = null;
+      let hardTimer = null;
+      const obs = new MutationObserver(() => {
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(finish, 40);
+      });
+      function finish() {
+        if (done) return;
+        done = true;
+        if (quietTimer) clearTimeout(quietTimer);
+        if (hardTimer) clearTimeout(hardTimer);
+        try {
+          obs.disconnect();
+        } catch (e) {
+          /* ignore */
+        }
+        resolve();
+      }
+      try {
+        obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      } catch (e) {
+        /* ignore */
+      }
+      quietTimer = setTimeout(finish, 40);
+      hardTimer = setTimeout(finish, maxMs || 400);
+    });
+  }
+
+  // 候选滚动容器：从内往外的可滚祖先，最后补上文档本身
+  function scrollerCandidates(node) {
+    const out = [];
+    let el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    while (el && el !== document.body && el !== document.documentElement) {
+      let cs = null;
+      try {
+        cs = getComputedStyle(el);
+      } catch (e) {
+        cs = null;
+      }
+      const oy = cs && cs.overflowY;
+      if (
+        (oy === 'auto' || oy === 'scroll' || oy === 'overlay') &&
+        el.scrollHeight > el.clientHeight + 24
+      ) {
+        out.push(el);
+      }
+      el = el.parentElement;
+    }
+    const se = document.scrollingElement || document.documentElement;
+    if (se && se.scrollHeight > se.clientHeight + 24) out.push(se);
+    return out;
+  }
+
+  // 已收集条目的序号范围与缺口：缺口 = 区间内没抓到的轮次
+  function archiveIndices() {
+    const known = new Set();
+    let min = Infinity;
+    let max = -Infinity;
+    for (const it of archive.values()) {
+      if (it.idx == null) continue;
+      known.add(it.idx);
+      if (it.idx < min) min = it.idx;
+      if (it.idx > max) max = it.idx;
+    }
+    if (!known.size) return null;
+    const holes = [];
+    for (let i = min; i <= max; i += 1) if (!known.has(i)) holes.push(i);
+    return { known, min, max, holes };
+  }
+
+  // 在指定容器上跑一遍：滚一屏 → 等稳定 → 采一次
+  async function sweepWith(sc, stepRatio, maxMs) {
+    const before = archive.size;
+    const view = sc.clientHeight || 400;
+    if (sc.scrollHeight < view * 1.5) return false;
     const start = sc.scrollTop;
     const prevBehavior = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
-    const cancel = () => {
-      sweepAbort = true;
-    };
-    window.addEventListener('wheel', cancel, { passive: true, once: true });
-    window.addEventListener('touchstart', cancel, { passive: true, once: true });
-    window.addEventListener('keydown', cancel, { once: true });
-
     const t0 = Date.now();
     try {
-      const step = Math.max(160, Math.floor(view * 0.7));
+      const step = Math.max(120, Math.floor(view * stepRatio));
       let y = 0;
-      while (Date.now() - t0 < 12000) {
+      let guard = 0;
+      while (guard < 500) {
+        guard += 1;
         sc.scrollTop = y;
-        await raf();
-        await sleep(50);
+        // 顶部往往要等站点异步补更早的历史，多给点时间
+        await settleQuiet(y === 0 ? 1200 : 420);
         scan(true, true);
         if (sweepAbort) break;
-        if (y >= sc.scrollHeight - view) break;
-        y += step;
+        if (Date.now() - t0 > maxMs) break;
+        const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
+        if (y >= maxTop) break;
+        y = Math.min(maxTop, y + step);
       }
       if (!sweepAbort) {
         sc.scrollTop = sc.scrollHeight;
-        await raf();
-        await sleep(80);
+        await settleQuiet(600);
         scan(true, true);
       }
     } catch (e) {
-      /* 页面切换/节点被删都可能抛，忽略 */
+      /* 页面切换 / 节点被删都可能抛，忽略 */
     } finally {
       sc.style.scrollBehavior = prevBehavior;
       try {
@@ -1087,13 +1150,141 @@
         /* ignore */
       }
       await raf();
-      await sleep(60);
+      await settleQuiet(250);
+    }
+    return archive.size > before;
+  }
+
+  async function sweep() {
+    if (sweeping) return;
+    const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
+    if (!anyEl) return;
+    const cands = scrollerCandidates(anyEl);
+    if (!cands.length) {
+      sweptOnce = true;
+      return;
+    }
+
+    sweeping = true;
+    sweepAbort = false;
+    // 补扫期间页面自己在滚，别让滚动跟随把高亮乱改
+    suppressSpyUntil = Date.now() + 30000;
+    const cancel = () => {
+      sweepAbort = true;
+    };
+    window.addEventListener('wheel', cancel, { passive: true, once: true });
+    window.addEventListener('touchstart', cancel, { passive: true, once: true });
+    window.addEventListener('keydown', cancel, { once: true });
+
+    let worked = null;
+    try {
+      for (const sc of cands) {
+        if (sweepAbort) break;
+        if (await sweepWith(sc, 0.7, 12000)) {
+          worked = sc;
+          break;
+        }
+      }
+      // 还有缺口（渲染慢 / 步进太大）：换细步长再走一遍
+      const idx = archiveIndices();
+      if (worked && idx && idx.holes.length && !sweepAbort) {
+        await sweepWith(worked, 0.35, 12000);
+      }
+    } catch (e) {
+      /* ignore */
+    } finally {
+      const aborted = sweepAbort;
+      sweepAbort = false;
+      await raf();
       scan(true);
-      suppressSpyUntil = Date.now() + 300;
+      suppressSpyUntil = Date.now() + 400;
       sweeping = false;
       sweptOnce = true;
-      if (sweepAbort) sweepBlockedUntil = Date.now() + 20000;
+      if (aborted) sweepBlockedUntil = Date.now() + 20000;
+      saveArchive(true);
+      reportGaps();
     }
+  }
+
+  // 扫完自查：有缺口就把「找到几条 / 应有几条」说出来，不装作成功
+  function reportGaps() {
+    const idx = archiveIndices();
+    if (!idx || !idx.holes.length) return;
+    const total = idx.max - idx.min + 1;
+    toast(`找到 ${idx.known.size}/${total} 条，还有 ${idx.holes.length} 条没加载出来`);
+  }
+
+  /* —— 目录缓存：同一个标签页里刷新不用重扫 —— */
+  function archiveKey() {
+    return 'co:archive:' + location.pathname;
+  }
+  let saveTimer = null;
+
+  function saveArchive(now) {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (now) {
+      writeArchive();
+      return;
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      writeArchive();
+    }, 500);
+  }
+
+  function writeArchive() {
+    {
+      try {
+        if (!items.length || items.length > 600) return;
+        const rows = items.map((it) => ({
+          k: it.key,
+          r: it.role,
+          t: (it.text || '').slice(0, 400),
+          w: (it.raw || '').slice(0, 2000),
+          m: it.time || '',
+          i: it.idx == null ? null : it.idx,
+          a: Math.round((it.ratio || 0) * 1e4) / 1e4
+        }));
+        sessionStorage.setItem(archiveKey(), JSON.stringify({ u: location.href, rows }));
+      } catch (e) {
+        /* 超限就算了，不影响主流程 */
+      }
+    }
+  }
+
+  function loadArchive() {
+    let data = null;
+    try {
+      const raw = sessionStorage.getItem(archiveKey());
+      if (!raw) return false;
+      data = JSON.parse(raw);
+    } catch (e) {
+      return false;
+    }
+    if (!data || data.u !== location.href || !Array.isArray(data.rows) || !data.rows.length) return false;
+    for (const r of data.rows) {
+      if (!r || !r.k || archive.has(r.k)) continue;
+      archive.set(r.k, {
+        key: r.k,
+        role: r.r === 'assistant' ? 'assistant' : 'user',
+        text: r.t || '',
+        raw: r.w || '',
+        time: r.m || '',
+        idx: r.i == null ? null : r.i,
+        ratio: r.a || 0,
+        el: null,
+        gone: true,
+        q: 1,
+        pos: 0
+      });
+      order.push(r.k);
+    }
+    const idx = archiveIndices();
+    if (!idx || !idx.holes.length) sweptOnce = true;
+    return order.length > 0;
   }
 
   /* ======================= 10. 渲染 ======================= */
@@ -1237,11 +1428,22 @@
   // 再不行从头线性扫一遍。全程临时关掉平滑滚动，避免几十次动画互相打断。
   async function seekTo(it) {
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
-    const sc = anyEl ? findScroller(anyEl) : null;
-    if (!sc) {
+    const cands = (anyEl ? scrollerCandidates(anyEl) : []).slice(0, 2);
+    if (!cands.length) {
       toast('这条消息当前未渲染，先手动滚动一下再试');
       return;
     }
+    try {
+      for (const sc of cands) {
+        if (await seekIn(sc, it)) return;
+      }
+      toast('这条消息暂时找不到，滚一下再试');
+    } catch (e) {
+      toast('跳转失败，请手动滚动到那条消息');
+    }
+  }
+
+  async function seekIn(sc, it) {
     const prevBehavior = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
     suppressSpyUntil = Date.now() + 2500;
@@ -1269,24 +1471,24 @@
           if (hit) {
             sc.style.scrollBehavior = prevBehavior;
             doJump(hit);
-            return;
+            return true;
           }
         }
       }
 
-      // 长对话兜底：从头扫一遍（每屏一次，最多 ~40 屏）
+      // 长对话兜底：从头扫一遍（每屏一次）
       const total = maxTop();
       for (let y = 0; y <= total; y += step) {
         const hit = await probe(y);
         if (hit) {
           sc.style.scrollBehavior = prevBehavior;
           doJump(hit);
-          return;
+          return true;
         }
       }
-      toast('这条消息暂时找不到，滚一下再试');
+      return false;
     } catch (e) {
-      toast('跳转失败，请手动滚动到那条消息');
+      return false;
     } finally {
       sc.style.scrollBehavior = prevBehavior;
     }
@@ -1391,6 +1593,10 @@
         lastCheapSig = '';
         scan(true);
         render();
+        // 手动重扫时连整段对话一起补一遍：被虚拟列表卸载的部分也能捞回来
+        sweptOnce = false;
+        sweepBlockedUntil = 0;
+        scheduleSweep();
         toast(`已重新扫描：${items.filter((i) => i.role === 'user').length} 个提问`);
       }
       if (act === 'export') exportMarkdown();
@@ -1560,6 +1766,7 @@
 
     // 先挂观察器、先扫一次：偏好读取失败或超时也不能让目录起不来
     mo.observe(document.documentElement, { childList: true, subtree: true });
+    loadArchive();
     scan(true);
 
     Promise.all([
@@ -1614,6 +1821,7 @@
       sweptOnce = false;
       sweepBlockedUntil = 0;
       activeKey = null;
+      setTimeout(loadArchive, 0);
       lastSignature = '';
       lastCheapSig = '';
       plan = null;
