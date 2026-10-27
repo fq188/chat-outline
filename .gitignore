@@ -13,3 +13,6 @@ dev/shots/
 Thumbs.db
 desktop.ini
 _dist/
+
+# 测试截图产物（仓库根）
+shots/
