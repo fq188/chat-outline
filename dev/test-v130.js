@@ -166,6 +166,64 @@ const SET_SEARCH = (page, text) =>
   gs = await GROUPS(page);
   check('清空搜索后恢复原折叠', gs.find((g) => g.day === '昨天').folded === true);
 
+  // ---------- 6.5 折叠组头的摘要 + 全部展开 / 全部收起 ----------
+  const peek = await page.evaluate(() => {
+    const sr = document.getElementById('chat-outline-host').shadowRoot;
+    const grps = Array.from(sr.querySelectorAll('.grp'));
+    const folded = grps.find((g) => g.classList.contains('folded'));
+    const open = grps.find((g) => !g.classList.contains('folded'));
+    const peekOf = (g) => (g ? g.querySelector('.gpeek') : null);
+    const fEl = peekOf(folded);
+    const oEl = peekOf(open);
+    const bar = sr.querySelector('.gbar');
+    return {
+      foldedText: fEl ? fEl.textContent.trim() : '',
+      foldedVisible: !!(fEl && fEl.offsetParent !== null),
+      openVisible: !!(oEl && oEl.offsetParent !== null),
+      barHidden: bar.hidden,
+      sum: (bar.querySelector('.gsum') || {}).textContent || '',
+      label: (bar.querySelector('.gact') || {}).textContent || ''
+    };
+  });
+  check(
+    '折叠组头显示「最后一问」摘要',
+    peek.foldedVisible && peek.foldedText.indexOf('剥离后为什么要退火') >= 0,
+    peek.foldedText
+  );
+  check('展开的组头不显示摘要', peek.openVisible === false);
+  check(
+    '工具条显示「3 天 · 6 轮」与「全部收起」',
+    peek.barHidden === false && peek.sum.indexOf('3 天') >= 0 && peek.label === '全部收起',
+    `${peek.sum} / ${peek.label}`
+  );
+
+  const clickFoldAll = () =>
+    page.evaluate(() => {
+      const sr = document.getElementById('chat-outline-host').shadowRoot;
+      sr.querySelector('.gbar .gact').click();
+    });
+
+  await clickFoldAll();
+  await page.waitForTimeout(250);
+  gs = await GROUPS(page);
+  check('点「全部收起」后三组都折叠', gs.every((g) => g.folded), gs.map((g) => `${g.day}:${g.folded}`).join(' '));
+  const label1 = await page.evaluate(
+    () => document.getElementById('chat-outline-host').shadowRoot.querySelector('.gbar .gact').textContent
+  );
+  check('按钮文案变成「全部展开」', label1 === '全部展开', label1);
+
+  await clickFoldAll();
+  await page.waitForTimeout(250);
+  gs = await GROUPS(page);
+  check('再点一次全部展开', gs.every((g) => !g.folded), gs.map((g) => `${g.day}:${g.folded}`).join(' '));
+
+  // 收回「昨天」这一组，给后面的跳转测试留一个折叠场景
+  await page.evaluate(() => {
+    const sr = document.getElementById('chat-outline-host').shadowRoot;
+    Array.from(sr.querySelectorAll('.grphead')).find((h) => h.dataset.day === '昨天').click();
+  });
+  await page.waitForTimeout(200);
+
   // ---------- 7. 点回答能跳转 ----------
   await page.evaluate(() => {
     const sr = document.getElementById('chat-outline-host').shadowRoot;

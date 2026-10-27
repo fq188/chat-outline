@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.3.0)
+ * 对话目录 · Chat Outline  (v1.3.1)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -740,7 +740,31 @@
     background: var(--hover); border-radius: 20px; padding: 0 6px;
   }
   .grphead .gline { flex: 1 1 auto; height: 1px; background: var(--line); }
+  /* 折叠起来时，组头右侧补一条「这一组最后一问」的摘要，收起也知道里面是什么 */
+  .grphead .gpeek {
+    display: none; flex: 1 1 auto; min-width: 0;
+    font-weight: 400; letter-spacing: 0; opacity: .9;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .grp.folded .grphead .gpeek { display: block; }
+  .grp.folded .grphead .gline { display: none; }
   .grpbody { list-style: none; margin: 0; padding: 0; }
+
+  /* 分组工具条：全部展开 / 全部收起（只在有多组时出现） */
+  .gbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 2px 10px 3px; flex: 0 0 auto;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 11px;
+  }
+  .gbar[hidden] { display: none; }
+  .gbar .gsum { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gbar .gact {
+    flex: 0 0 auto; height: 20px; padding: 0 8px; border-radius: 6px;
+    border: 1px solid var(--line); color: var(--muted); font-size: 11px;
+  }
+  .gbar .gact:hover { background: var(--hover); color: var(--fg); border-color: var(--muted); }
+  .gbar .gact:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
   .grp.folded .grpbody { display: none; }
   /* 回答：整体缩进约两个字 + 左侧引导线，和提问一眼分得开 */
   .item.asst {
@@ -821,6 +845,10 @@
         <button class="iconbtn" data-act="close" title="收起（Alt+Q）" aria-label="收起目录（Alt+Q）">✕</button>
       </div>
       <div class="search"><input type="search" placeholder="搜索问题 / 回答…" aria-label="搜索问题 / 回答" /></div>
+      <div class="gbar" hidden>
+        <span class="gsum"></span>
+        <button class="gact" data-act="foldAll" aria-label="全部折叠或展开">全部收起</button>
+      </div>
       <ul class="list"></ul>
       <div class="foot">
         <details class="adv">
@@ -841,6 +869,9 @@
   const $input = app.querySelector('.search input');
   const $toast = app.querySelector('.toast');
   const $btnAsst = app.querySelector('[data-act="asst"]');
+  const $gbar = app.querySelector('.gbar');
+  const $gsum = app.querySelector('.gbar .gsum');
+  const $btnFoldAll = app.querySelector('[data-act="foldAll"]');
   const $fUser = app.querySelector('[data-f="user"]');
   const $fAsst = app.querySelector('[data-f="assistant"]');
 
@@ -1801,6 +1832,7 @@
     grp.classList.toggle('folded', fold);
     const head = grp.querySelector('.grphead');
     if (head) head.setAttribute('aria-expanded', String(!fold));
+    updateFoldBar(lastGroups);
   }
 
   // 把可见条目按日期切成时间线分组（文档顺序就是时间顺序）
@@ -1810,13 +1842,60 @@
     for (const it of list) {
       const label = it.day || '';
       if (!cur || cur.label !== label) {
-        cur = { label, items: [], rounds: 0 };
+        cur = { label, items: [], rounds: 0, lastQ: '' };
         groups.push(cur);
       }
       cur.items.push(it);
-      if (it.role === 'user') cur.rounds += 1;
+      if (it.role === 'user') {
+        cur.rounds += 1;
+        cur.lastQ = it.text; // 折叠时用「这一组最后一问」当摘要
+      }
     }
     return groups;
+  }
+
+  // 折叠摘要：去掉「昨天」「第二问：」这类前缀，只留问题本身
+  // （组头已经写了日期，摘要里再来一遍「昨天」很啰嗦）
+  function peekText(q, label) {
+    let t = String(q || '').replace(/\s+/g, ' ').trim();
+    if (label && t.indexOf(label) === 0) {
+      const rest = t.slice(label.length).replace(/^[\s:：·,，.。\-—]+/, '');
+      if (rest) t = rest;
+    }
+    t = t.replace(/^第\s*[0-9一二三四五六七八九十百零两]+\s*(问|个问题|条|轮)?\s*[:：.、]?\s*/, '');
+    t = t.replace(/^(Q|q|问)\s*\d+\s*[:：.、]?\s*/, '');
+    return t || String(q || '').trim();
+  }
+
+  // —— 分组工具条：全部展开 / 全部收起 ——
+  let lastGroups = [];
+
+  function updateFoldBar(groups) {
+    const labeled = groups.filter((g) => g.label);
+    if (labeled.length < 2) {
+      $gbar.hidden = true;
+      return;
+    }
+    const rounds = groups.reduce((n, g) => n + g.rounds, 0);
+    $gbar.hidden = false;
+    $gsum.textContent = query ? `${labeled.length} 天有命中 · ${rounds} 轮` : `${labeled.length} 天 · ${rounds} 轮`;
+    // 搜索时所有分组都是强制展开的，「全部收起」点了也看不见效果，先藏起来
+    $btnFoldAll.hidden = !!query;
+    const allFolded = labeled.every((g) => foldedDays.has(g.label));
+    $btnFoldAll.dataset.mode = allFolded ? 'open' : 'fold';
+    $btnFoldAll.textContent = allFolded ? '全部展开' : '全部收起';
+    $btnFoldAll.setAttribute('aria-label', allFolded ? '展开所有分组' : '收起所有分组');
+  }
+
+  function setAllFolds(fold) {
+    lastGroups
+      .filter((g) => g.label)
+      .forEach((g) => {
+        if (fold) foldedDays.add(g.label);
+        else foldedDays.delete(g.label);
+      });
+    saveFolds();
+    render();
   }
 
   function itemHtml(it) {
@@ -1878,6 +1957,7 @@
             <span class="caret">▾</span>
             <span class="glabel">${esc(g.label)}</span>
             <span class="gmeta">${g.rounds ? `${g.rounds} 轮` : `${g.items.length} 条`}</span>
+            <span class="gpeek">${esc(peekText(g.lastQ, g.label).slice(0, 120))}</span>
             <span class="gline"></span>
           </div>
           <ul class="grpbody">${body}</ul>
@@ -1887,6 +1967,8 @@
 
     $list.innerHTML = html;
     $list.scrollTop = keepScroll;
+    lastGroups = groups;
+    updateFoldBar(groups);
   }
 
   /* ======================= 11. 跳转 ======================= */
@@ -2159,6 +2241,8 @@
         toast(`已重新扫描：${items.filter((i) => i.role === 'user').length} 个提问`);
       }
       if (act === 'fold') toggleFold(btn.dataset.day);
+      // 工具条上那个按钮：当前有展开的就全收起，已经全收起就全展开
+      if (act === 'foldAll') setAllFolds(btn.dataset.mode === 'fold');
       if (act === 'export') exportMarkdown();
       if (act === 'asst') {
         showAssistant = !showAssistant;

@@ -23,6 +23,8 @@
 
 - **提问清单** —— 把整段对话里的提问按 1、2、3… 列出来，显示前两行
 - **时间线分组** —— 按页面上的日期分隔条（今天 / 昨天 / 10月24日）分成一级标题，点标题即折叠；没有日期信息时退回用时间戳里的「月/日」，实在没有就不分组，不留空标题
+- **收起也知道里面是什么** —— 折叠起来的组头右侧会显示**这一组最后一问**的摘要（超出省略）
+- **全部展开 / 全部收起** —— 搜索框下面一条细工具栏，一键收放所有分组，并显示「N 天 · M 轮」
 - **回答也列出来** —— 每条提问下面跟一条回答，缩进两个字 + 左侧引导线，和提问一眼分得开；想看纯清单就点「答」关掉
 - **点击跳转** —— 平滑滚动到对应消息，并闪一圈绿色描边，一眼定位
 - **滚动跟随** —— 你在页面上滚到哪儿，目录就高亮哪一问
@@ -56,7 +58,8 @@
 | `Alt + Q` | 显示 / 收起目录（点工具栏图标也行） |
 | 点列表条目 | 跳转到该消息并高亮 |
 | 序号徽章 | 第 N 个提问；AI 回答显示为 `答` |
-| 分组标题 | 点一下折叠 / 展开这一天；折叠状态按会话记住，刷新后还在 |
+| 分组标题 | 点一下折叠 / 展开这一天；折叠状态按会话记住，刷新后还在；收起时右侧显示该组最后一问 |
+| 分组工具栏 | 「全部收起 / 全部展开」一键处理所有分组（搜索时自动隐藏，因为那时强制全展开） |
 | 搜索框 | 中文/英文关键词（大小写不敏感），命中词高亮，回车跳第一条 |
 | 键盘操作 | Tab 聚焦后 Enter / 空格跳转（分组标题上是折叠），`↑` `↓` 在条目间移动 |
 | 滚动页面 | 目录自动高亮当前阅读位置 |
@@ -126,6 +129,23 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
 ## 更新日志 / Changelog
+
+### v1.3.1 — 全部展开 / 收起 + 折叠组头的最后一问 / Fold-all and a peek line
+
+**新功能 / Features**
+
+| 中文 | English |
+| --- | --- |
+| 搜索框下面加一条细工具栏：左边「N 天 · M 轮」，右边一个按钮，有展开的就「全部收起」，已全收起就变「全部展开」 | A thin toolbar sits under the search box: "N days · M rounds" on the left, and a button on the right that reads **Collapse all** while anything is open and switches to **Expand all** once everything is folded |
+| 折叠起来的组头右侧显示**这一组最后一问**的摘要（单行、超出省略），收起来也大概知道那天聊了什么 | Collapsed headings now show a one-line, ellipsised summary of **the last question in that group**, so a folded day still tells you what it was about |
+| 摘要会去掉「昨天」「第二问：」这类前缀 —— 日期组头上已经写了，再来一遍很啰嗦 | The summary strips prefixes like "Yesterday" or "Question 2:" that would just repeat the heading |
+| 搜索时工具栏按钮自动隐藏（那时所有分组本来就是强制展开的），只保留「N 天有命中 · M 轮」的统计 | While searching, the fold-all button hides (groups are force-expanded anyway) and the bar shows "N days with hits · M rounds" |
+
+**说明 / Notes**
+
+| 中文 | English |
+| --- | --- |
+| 折叠状态和以前一样按会话记住，点「全部收起」也会一起存下来，刷新后保持 | Folding is still remembered per conversation; "Collapse all" is saved too and survives a reload |
 
 ### v1.3.0 — 时间线分组 + 回答缩进 / Timeline groups and indented answers
 
