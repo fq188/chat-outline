@@ -82,6 +82,13 @@ async function waitCount(page, n, timeout = 20000) {
   const other = await readItems(page);
   check('切换会话后目录重建，不串场', other.length === 30 && other[0].txt.includes('第 1 个问题'), `${other.length} 条`);
 
+  // 4) 最苛刻的虚拟列表：只挂「和视口相交」的消息 + 渲染延迟
+  await page.goto('https://chatgpt.com/c/slim-window?window=slim&delay=120', { waitUntil: 'domcontentloaded' });
+  const slim = await waitCount(page, 30, 25000);
+  check('窄窗口(只挂视口内)虚拟列表仍收全 30 条', slim.length === 30, `实际 ${slim.length} 条`);
+  const slimIdx = slim.map((x) => parseInt(x.idx, 10));
+  check('窄窗口下编号也连续无缺口', slimIdx.every((n, i) => n === i + 1) && slimIdx.length === 30, slimIdx.slice(0, 4).join(',') + '…');
+
   check('无未捕获异常', errors.length === 0, errors.slice(0, 2).join(' | '));
 
   await browser.close();

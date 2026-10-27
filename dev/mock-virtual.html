@@ -70,11 +70,14 @@
 
         var mounted = new Map();
 
+        // ?window=slim 只挂「和视口真正相交」的消息，最苛刻的虚拟列表
+        var SLIM = new URLSearchParams(location.search).get('window') === 'slim';
+
         function render() {
           var view = scroller.clientHeight || 800;
           var st = scroller.scrollTop;
-          var lo = st - view * 2;
-          var hi = st + view * 3;
+          var lo = SLIM ? st : st - view * 2;
+          var hi = SLIM ? st + view : st + view * 3;
           var want = new Set();
           for (var k = 0; k < msgs.length; k += 1) {
             var m = msgs[k];

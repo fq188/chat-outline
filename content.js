@@ -1126,8 +1126,17 @@
       while (guard < 500) {
         guard += 1;
         sc.scrollTop = y;
-        // 顶部往往要等站点异步补更早的历史，多给点时间
-        await settleQuiet(y === 0 ? 1200 : 420);
+        if (y === 0) {
+          // 顶部常常要等站点异步补更早的历史：只要还在变高就继续等
+          let prevH = sc.scrollHeight;
+          for (let k = 0; k < 6; k += 1) {
+            await settleQuiet(700);
+            if (sc.scrollHeight === prevH) break;
+            prevH = sc.scrollHeight;
+          }
+        } else {
+          await settleQuiet(420);
+        }
         scan(true, true);
         if (sweepAbort) break;
         if (Date.now() - t0 > maxMs) break;
@@ -1153,6 +1162,30 @@
       await settleQuiet(250);
     }
     return archive.size > before;
+  }
+
+  // 按「序号比例」回访缺口：中间某几轮没采到时，逐个洞跳过去补
+  async function fillHoles(sc) {
+    const view = sc.clientHeight || 400;
+    const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
+    if (!maxTop) return;
+    const step = Math.max(120, Math.floor(view * 0.45));
+    for (let round = 0; round < 30; round += 1) {
+      const idx = archiveIndices();
+      if (!idx || !idx.holes.length) return;
+      const hole = idx.holes[0];
+      const span = Math.max(1, idx.max - idx.min);
+      const base = Math.round(((hole - idx.min) / span) * maxTop);
+      let ok = false;
+      for (let d = -2; d <= 2 && !ok; d += 1) {
+        sc.scrollTop = Math.max(0, Math.min(maxTop, base + d * step));
+        await settleQuiet(420);
+        scan(true, true);
+        const now = archiveIndices();
+        if (!now || now.known.has(hole)) ok = true;
+      }
+      if (!ok) return; // 这一处补不到，别死循环
+    }
   }
 
   async function sweep() {
@@ -1189,6 +1222,7 @@
       const idx = archiveIndices();
       if (worked && idx && idx.holes.length && !sweepAbort) {
         await sweepWith(worked, 0.35, 12000);
+        await fillHoles(worked);
       }
     } catch (e) {
       /* ignore */
