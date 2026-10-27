@@ -125,6 +125,24 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.2.6 — 长对话一趟扫不完就接着扫 / Sweep resumes instead of giving up
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| 很长的对话一轮补扫（14 秒预算）走不到底，旧版扫到一半就把「已补扫」标记置上，之后再也不会补 —— 目录永远停在一半。现在**记住停下的位置**，隔一秒接下趟继续，直到真的到底 | A very long thread does not fit in one 14-second pass; the old build marked the sweep as done at half-way and never retried, so the outline stayed permanently half-filled. The stop position is now remembered and the next pass continues from there until the end is reached |
+| 最顶上那几条从来没采到：滚动后站点要过一会儿才渲染，采样早于渲染就采了个空。现在每一步都检查「挂载的条目换没换」，没换就再等一轮（最多两轮） | The first few entries were never collected: sites render slightly after the scroll, so sampling ran before the DOM updated. Each step now checks whether the mounted set actually changed and waits again (up to two rounds) if it did not |
+| 刷新后目录虽然有缓存，却被「缓存已完整」的旧判断锁死，不再补扫 —— 这正是「刷新之后还是那几条」的原因。现在缓存只保证列表不空，要不要补扫交给位置信号决定 | After a reload the cached outline locked out further sweeps, which is exactly why a reload still showed only a few entries. The cache now only guarantees a non-empty list; whether to sweep is decided by the position signal |
+| 「收全了没有」原来按位置判断，但补扫结束会把页面滚回原位，长对话必然停在底部、已挂载条目只盖住末尾，于是永远判定「没全」，白扫 8 趟。现在改为：**从顶部起的那趟确实走到了底 + 序号没有洞**才算收全 | Completion used to be judged by position, but every sweep restores the scroll, so a long thread always sits at the bottom with only the tail mounted — it looked incomplete forever and wasted eight passes. Completion now means: a pass started at the top actually reached the bottom, and there are no index gaps |
+
+**体验 / Experience**
+
+| 中文 | English |
+| --- | --- |
+| 补扫过程中目录会跟着一条条长出来（节流 0.7 秒），不用干等到最后才看到内容 | The outline now fills in as the sweep progresses (throttled to 0.7 s) instead of appearing all at once at the end |
+| 实测 400 条消息（约 9.4 万像素高）自动分两趟收全，用时约 20 秒 | Measured on a 400-message thread (~94,000 px tall): fully collected in two passes, about 20 s |
+
 ### v1.2.5 — 判断「要不要补扫」不再靠高度比例 / Better sweep trigger
 
 **修复 / Fixes**

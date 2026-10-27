@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.2.5)
+ * 对话目录 · Chat Outline  (v1.2.6)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -480,6 +480,8 @@
   let prefCollapsed = null;
   let lastSignature = '';
   let lastCheapSig = '';
+  // 补扫过程中让列表跟着长（节流）：长对话要扫半分钟，不能一直空着不更新
+  let lastQuietRender = 0;
   // 刷新后补扫：内容常常在 MutationObserver 挂上之前就渲染完，
   // 之后页面不再变动，只等 DOM 变动就会一直空着
   let retryTimer = null;
@@ -499,6 +501,13 @@
   let sweepAbort = false;
   let sweptOnce = false;
   let sweepBlockedUntil = 0;
+  // 长对话一趟扫不完时接着扫：记住走到哪、已经扫过几趟（v1.2.6）
+  let sweepResume = null; // { sc, y } 上一趟停在哪个位置
+  let sweepRound = 0; // 这一页已经补扫过几趟
+  let sweepNextAt = 0; // 下一趟最早什么时候能开始
+  const SWEEP_MAX_ROUNDS = 8; // 最多连着扫 8 趟，防死循环
+  // 判断「收全了没有」用的进度：从顶部起过（fromTop）+ 有趟真的走到了底（done）
+  const sweepCover = { fromTop: false, done: false };
 
   /* ======================= 7. 样式 ======================= */
   const CSS = `
@@ -879,6 +888,9 @@
       archive.clear();
       order = [];
       sweptOnce = false;
+      sweepRound = 0;
+      sweepResume = null;
+      sweepNextAt = 0;
     }
     archiveHref = location.href;
 
@@ -975,6 +987,11 @@
       } else {
         $count.textContent = String(items.filter((i) => i.role === 'user').length);
       }
+    } else if (sig !== lastSignature && Date.now() - lastQuietRender > 700) {
+      // 补扫途中节流刷新：让用户看到目录一条条长出来，而不是干等半分钟
+      lastQuietRender = Date.now();
+      lastSignature = sig;
+      render();
     }
 
     if (!openedOnce && items.some((i) => i.role === 'user')) {
@@ -1001,11 +1018,50 @@
     return items;
   }
 
+  // 已挂载条目在滚动容器里占的纵向范围 —— 判断「上下还有没有没挂载的内容」
+  function coverage(sc) {
+    const view = sc.clientHeight || 400;
+    const srect = sc.getBoundingClientRect ? sc.getBoundingClientRect() : { top: 0 };
+    let firstTop = Infinity;
+    let lastBottom = -Infinity;
+    let covered = 0;
+    let mounted = 0;
+    for (const it of items) {
+      if (!it.el || !it.el.isConnected) continue;
+      const r = it.el.getBoundingClientRect();
+      if (r.height <= 0) continue;
+      const t = r.top - srect.top + (sc.scrollTop || 0);
+      if (t < firstTop) firstTop = t;
+      if (t + r.height > lastBottom) lastBottom = t + r.height;
+      covered += r.height;
+      mounted += 1;
+    }
+    const idx = archiveIndices();
+    return {
+      view,
+      scrollHeight: sc.scrollHeight || 0,
+      covered,
+      mounted,
+      firstTop,
+      lastBottom,
+      holes: idx ? idx.holes : []
+    };
+  }
+
+  // 还有没挂载的内容吗？上下留白超过 48px、或序号有洞，都算没收全
+  function stillIncomplete(c) {
+    if (!c) return true;
+    if (c.holes.length) return true;
+    if (!isFinite(c.firstTop) || !isFinite(c.lastBottom)) return true;
+    if (c.scrollHeight <= 0) return false;
+    return c.firstTop > 48 || c.lastBottom < c.scrollHeight - 48;
+  }
+
   // 判断「现在看到的只是整段对话的一小截」：
   // 已渲染条目的高度加起来，远小于容器总高 → 剩下的都被虚拟列表卸载了。
   function maybeSweep() {
     if (sweeping || sweptOnce) return;
-    if (Date.now() < sweepBlockedUntil) return;
+    if (Date.now() < sweepBlockedUntil || Date.now() < sweepNextAt) return;
     if (document.hidden) return;
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
     if (!anyEl) return;
@@ -1020,40 +1076,25 @@
 
     const sc = findScroller(anyEl);
     if (!sc) return;
-    const view = sc.clientHeight || 400;
-    const srect = sc.getBoundingClientRect ? sc.getBoundingClientRect() : { top: 0 };
+    const c = coverage(sc);
 
-    // ② 位置信号（最可靠）：已挂载条目在容器里并没有铺满，
-    //    上面或下面还留着高度 → 那里有没挂载的消息
-    let firstTop = Infinity;
-    let lastBottom = -Infinity;
-    let covered = 0;
-    for (const it of items) {
-      if (!it.el || !it.el.isConnected) continue;
-      const r = it.el.getBoundingClientRect();
-      if (r.height <= 0) continue;
-      const t = r.top - srect.top + (sc.scrollTop || 0);
-      if (t < firstTop) firstTop = t;
-      if (t + r.height > lastBottom) lastBottom = t + r.height;
-      covered += r.height;
-    }
-    if (!isFinite(firstTop)) return;
-    if (firstTop > 48 || lastBottom < sc.scrollHeight - 48) {
+    // ② 位置信号（最可靠）：已挂载条目没铺满容器，上面或下面还留着高度
+    if (stillIncomplete(c)) {
       scheduleSweep();
       return;
     }
 
     // ③ 兜底：已渲染高度远小于容器总高
-    if (sc.scrollHeight < view * 2.5) return;
-    if (covered * 1.6 < sc.scrollHeight) scheduleSweep();
+    if (c.scrollHeight < c.view * 2.5) return;
+    if (c.covered * 1.6 < c.scrollHeight) scheduleSweep();
   }
 
-  function scheduleSweep() {
+  function scheduleSweep(delay) {
     if (sweepTimer || sweeping) return;
     sweepTimer = setTimeout(() => {
       sweepTimer = null;
       sweep();
-    }, 600);
+    }, delay || 600);
   }
 
   // —— 补扫（sweep） ——
@@ -1136,21 +1177,41 @@
     return { known, min, max, holes };
   }
 
+  // 当前挂载了哪些条目（数量 + 第一条的 key）：
+  // 用来判断「滚动之后站点到底有没有重新渲染」—— 没变就是还没渲出来
+  function mountedSig() {
+    let n = 0;
+    let firstKey = '';
+    for (const it of items) {
+      if (!it.el || !it.el.isConnected) continue;
+      if (!n) firstKey = it.key;
+      n += 1;
+    }
+    return n + '|' + firstKey;
+  }
+
   // 在指定容器上跑一遍：滚一屏 → 等稳定 → 采一次
-  async function sweepWith(sc, stepRatio, maxMs) {
+  // startY > 0 表示「上一趟没扫完，从这里接着走」（长对话一趟 12s 走不完）
+  async function sweepWith(sc, stepRatio, maxMs, startY) {
     const before = archive.size;
     const view = sc.clientHeight || 400;
-    const res = { grew: 0, moved: 0, ok: false };
-    if (sc.scrollHeight < view * 1.5) return res;
+    const res = { grew: 0, moved: 0, ok: false, done: false, endY: 0, nextY: 0 };
+    if (sc.scrollHeight < view * 1.5) {
+      res.done = true;
+      return res;
+    }
 
     const start = sc.scrollTop;
     const prevBehavior = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
     const t0 = Date.now();
     const seenPos = new Set();
+    const maxStart = Math.max(0, sc.scrollHeight - view);
+    let y = Math.max(0, Math.min(maxStart, Math.round(startY || 0)));
+    let reachedEnd = false;
+    let prevSig = mountedSig();
     try {
       const step = Math.max(120, Math.floor(view * stepRatio));
-      let y = 0;
       let guard = 0;
       while (guard < 500) {
         guard += 1;
@@ -1168,10 +1229,22 @@
           await settleQuiet(420);
         }
         scan(true, true);
+        // 站点渲染常常比滚动慢半拍：位置动了但一条新消息都没挂上，
+        // 说明还没渲出来（顶部最容易这样漏），再等一轮。最多等两轮。
+        let sig = mountedSig();
+        for (let r = 0; r < 2 && sig === prevSig; r += 1) {
+          await settleQuiet(450);
+          scan(true, true);
+          sig = mountedSig();
+        }
+        prevSig = sig;
         if (sweepAbort) break;
-        if (Date.now() - t0 > maxMs) break;
         const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
-        if (y >= maxTop) break;
+        if (y >= maxTop) {
+          reachedEnd = true;
+          break;
+        }
+        if (Date.now() - t0 > maxMs) break;
         y = Math.min(maxTop, y + step);
       }
       if (!sweepAbort) {
@@ -1183,6 +1256,12 @@
     } catch (e) {
       /* 页面切换 / 节点被删都可能抛，忽略 */
     } finally {
+      // 记下「走到哪了」：没扫完的话下一趟从这里接着走
+      try {
+        res.endY = Math.round(sc.scrollTop);
+      } catch (e) {
+        res.endY = y;
+      }
       sc.style.scrollBehavior = prevBehavior;
       try {
         sc.scrollTop = start;
@@ -1196,6 +1275,10 @@
     res.moved = seenPos.size;
     // 只有「位置真的变过」才算这个容器在滚；否则它只是看着像滚动容器
     res.ok = res.moved >= 3;
+    // done = 真的滚到了底（预算用光 / 被用户打断都算没走完）
+    res.done = !sweepAbort && reachedEnd;
+    // nextY = 没扫完时该从哪接着扫（注意不是最后的「贴底一访」，那只是收尾）
+    res.nextY = res.done ? 0 : y;
     return res;
   }
 
@@ -1232,14 +1315,18 @@
     if (sweeping) return;
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
     if (!anyEl) return;
+
     const cands = scrollerCandidates(anyEl).slice(0, 4);
     if (!cands.length) {
       sweptOnce = true;
       return;
     }
+    // 上一趟没走完：同一个容器还在，就接着它的位置往下走
+    const resume = sweepResume && sweepResume.sc && sweepResume.sc.isConnected ? sweepResume : null;
 
     sweeping = true;
     sweepAbort = false;
+    sweepRound += 1;
     // 补扫期间页面自己在滚，别让滚动跟随把高亮乱改
     suppressSpyUntil = Date.now() + 30000;
     const cancel = () => {
@@ -1250,37 +1337,71 @@
     window.addEventListener('keydown', cancel, { once: true });
 
     let worked = null;
+    let unfinished = null; // { sc, y } 预算用光时停在哪 → 下一趟接着走
+    let passDone = false; // 这一趟有没有真的滚到底
     const tried = [];
     try {
-      // 逐个候选试：只有「位置真的动过」的容器才可能把内容带出来
-      let best = null;
-      let bestGrew = 0;
-      for (const sc of cands) {
-        if (sweepAbort) break;
-        const r = await sweepWith(sc, 0.7, 12000);
+      // 续扫优先：长对话一趟 14s 走不完，接着上次停下的位置继续，别每次都从头来
+      if (resume && cands.indexOf(resume.sc) >= 0) {
+        const r = await sweepWith(resume.sc, 0.7, 14000, resume.y);
         tried.push({
-          t: (sc.tagName || '') + '',
-          sh: sc.scrollHeight,
-          ch: sc.clientHeight,
+          t: String(resume.sc.tagName || '') + '(resume)',
+          from: resume.y,
+          sh: resume.sc.scrollHeight,
+          ch: resume.sc.clientHeight,
           moved: r.moved,
-          grew: r.grew
+          grew: r.grew,
+          done: r.done
         });
-        if (r.moved >= 3 && r.grew > bestGrew) {
-          best = sc;
-          bestGrew = r.grew;
+        // 续扫用的是同一个已验证过的容器，位置动过就算数
+        if (r.moved >= 1) {
+          worked = resume.sc;
+          passDone = r.done;
         }
-        if (r.moved >= 3 && r.grew >= 2) {
-          best = sc;
-          break;
+        if (r.moved >= 1 && !r.done) unfinished = { sc: resume.sc, y: r.nextY };
+      }
+
+      // 逐个候选试：只有「位置真的动过」的容器才可能把内容带出来
+      if (!worked && !sweepAbort) {
+        let best = null;
+        let bestGrew = -1;
+        let bestRes = null;
+        for (const sc of cands) {
+          if (sweepAbort) break;
+          const r = await sweepWith(sc, 0.7, 14000);
+          tried.push({
+            t: String(sc.tagName || ''),
+            sh: sc.scrollHeight,
+            ch: sc.clientHeight,
+            moved: r.moved,
+            grew: r.grew,
+            done: r.done
+          });
+          if (r.moved >= 3 && r.grew > bestGrew) {
+            best = sc;
+            bestGrew = r.grew;
+            bestRes = r;
+          }
+          if (r.moved >= 3 && r.grew >= 2) {
+            best = sc;
+            bestRes = r;
+            break;
+          }
+        }
+        worked = best;
+        if (worked && bestRes) {
+          passDone = bestRes.done;
+          if (!bestRes.done) unfinished = { sc: worked, y: bestRes.nextY };
         }
       }
-      worked = best;
 
       // 还有缺口（渲染慢 / 步进太大）：换细步长再走一遍，再逐洞回访
       const idx = archiveIndices();
-      if (worked && idx && idx.holes.length && !sweepAbort) {
-        await sweepWith(worked, 0.35, 12000);
-        await fillHoles(worked);
+      if (worked && idx && idx.holes.length && !sweepAbort && !unfinished) {
+        const r = await sweepWith(worked, 0.35, 12000);
+        if (r.moved >= 3 && r.done) passDone = true;
+        if (r.moved >= 3 && !r.done) unfinished = { sc: worked, y: r.nextY };
+        if (!unfinished) await fillHoles(worked);
       }
     } catch (e) {
       /* ignore */
@@ -1291,11 +1412,50 @@
       scan(true);
       suppressSpyUntil = Date.now() + 400;
       sweeping = false;
-      sweptOnce = true;
       if (aborted) sweepBlockedUntil = Date.now() + 20000;
+
+      // 「收全了没有」不能看位置：补扫完会把页面滚回原位（长对话必然停在底部），
+      // 那时已挂载的条目本来就只盖住末尾，按位置判断永远是「没全」。
+      // 真正的判据是：从顶部开始的一趟确实走到了底（中途没跳过），且序号没有洞。
+      if (worked && !resume) sweepCover.fromTop = true;
+      if (worked && passDone) sweepCover.done = true;
+      const holeCount = (archiveIndices() || { holes: [] }).holes.length;
+      const gaps = !(sweepCover.fromTop && sweepCover.done) || holeCount > 0;
+      const canRetryHole = holeCount > 0 && sweepRound < 3;
+      const carryOn =
+        !aborted &&
+        !!worked &&
+        (!!unfinished || canRetryHole) &&
+        sweepRound < SWEEP_MAX_ROUNDS;
+      if (carryOn) {
+        sweptOnce = false;
+        sweepResume = unfinished || null;
+        sweepNextAt = Date.now() + 900;
+        // 自己排下一趟：补扫结束后页面是静止的，没人会再来触发 maybeSweep
+        scheduleSweep(1200);
+      } else {
+        sweptOnce = true;
+        sweepResume = null;
+        sweepNextAt = 0;
+        if (!gaps) {
+          sweepRound = 0; // 收全了，下次改动可以从头数
+          sweepCover.fromTop = false;
+          sweepCover.done = false;
+        }
+      }
+
       saveArchive(true);
-      reportGaps();
-      writeDiag({ aborted, tried });
+      reportGaps(gaps, carryOn);
+      writeDiag({
+        aborted,
+        tried,
+        round: sweepRound,
+        carryOn,
+        fromTop: sweepCover.fromTop,
+        reachedEnd: sweepCover.done,
+        holes: holeCount,
+        resumeAt: sweepResume ? sweepResume.y : null
+      });
     }
   }
 
@@ -1328,12 +1488,18 @@
     }
   }
 
-  // 扫完自查：有缺口就把「找到几条 / 应有几条」说出来，不装作成功
-  function reportGaps() {
+  // 扫完自查：还有没捞到的就把「找到几条」说出来，不装作成功。
+  // quiet=true 表示「还在接着扫」，这时先别打扰用户。
+  function reportGaps(gaps, quiet) {
+    if (quiet || gaps === false) return;
     const idx = archiveIndices();
-    if (!idx || !idx.holes.length) return;
-    const total = idx.max - idx.min + 1;
-    toast(`找到 ${idx.known.size}/${total} 条，还有 ${idx.holes.length} 条没加载出来`);
+    const found = archive.size;
+    if (idx && idx.holes.length) {
+      const total = idx.max - idx.min + 1;
+      toast(`找到 ${found}/${total} 条，还有 ${idx.holes.length} 条没加载出来`);
+      return;
+    }
+    toast(`目录收了 ${found} 条，页面可能还有没加载出来的内容`);
   }
 
   /* —— 目录缓存：同一个标签页里刷新不用重扫 —— */
@@ -1404,8 +1570,10 @@
       });
       order.push(r.k);
     }
-    const idx = archiveIndices();
-    if (!idx || !idx.holes.length) sweptOnce = true;
+    // 缓存只保证「目录不是空的」，不代表收全了：
+    // 上次可能只扫到一半就刷新了。所以这里不能锁死补扫，
+    // 交给位置信号决定（当前 DOM 没铺满整段高度就还得补一趟）。
+    sweptOnce = false;
     return order.length > 0;
   }
 
@@ -1718,6 +1886,11 @@
         // 手动重扫时连整段对话一起补一遍：被虚拟列表卸载的部分也能捞回来
         sweptOnce = false;
         sweepBlockedUntil = 0;
+        sweepRound = 0;
+        sweepResume = null;
+        sweepNextAt = 0;
+        sweepCover.fromTop = false;
+        sweepCover.done = false;
         scheduleSweep();
         writeDiag({ phase: 'manual' });
         toast(`已重新扫描：${items.filter((i) => i.role === 'user').length} 个提问`);
@@ -1945,6 +2118,11 @@
       archiveHref = location.href;
       sweptOnce = false;
       sweepBlockedUntil = 0;
+      sweepRound = 0;
+      sweepResume = null;
+      sweepNextAt = 0;
+      sweepCover.fromTop = false;
+      sweepCover.done = false;
       activeKey = null;
       setTimeout(loadArchive, 0);
       lastSignature = '';

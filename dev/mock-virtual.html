@@ -56,13 +56,17 @@
         // ?spec=mess 复刻真实症状：5 条很矮的消息 + 1 条特别高的回答，
         // 页面停在底部时「已渲染高度」够占满容器，只按覆盖率判断就不会补扫
         var MESS = Q.get('spec') === 'mess';
-        var N = MESS ? 6 : 60;
+        // ?n=140 指定消息条数（默认 60）；?tall=3 每条高度乘几倍
+        // 用「超长对话 + 慢渲染」把一趟补扫的 14s 预算撑爆，验证续扫
+        var N = parseInt(Q.get('n') || '0', 10) || (MESS ? 6 : 60);
+        var TALL = parseInt(Q.get('tall') || '1', 10) || 1;
         var msgs = [];
         var top = 0;
         for (var i = 0; i < N; i += 1) {
           var isUser = i % 2 === 0;
           var h = isUser ? 120 + (i % 3) * 10 : 300 + (i % 5) * 20;
           if (MESS) h = i === N - 1 ? 2600 : 110;
+          h = h * TALL;
           msgs.push({ i: i, isUser: isUser, h: h, top: top, n: Math.floor(i / 2) + 1 });
           top += h;
         }
