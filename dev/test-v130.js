@@ -2,7 +2,7 @@
  * v1.3.0 回归测试：时间线分组 + 回答缩进 + 折叠
  *   1. 按页面上的日期分隔条分出 3 个一级分组（今天 / 昨天 / 10月24日）
  *   2. 每组下面提问 + 回答都在，回答紧跟在提问之后
- *   3. 回答的缩进比提问明显深（左侧留白 + 引导线），一眼能分开
+ *   3. 回答的缩进比提问明显深（约两个字），一眼能分开
  *   4. 点分组标题折叠 / 展开，折叠的条目不占位
  *   5. 刷新后折叠状态还在（sessionStorage）
  *   6. 搜索时自动展开命中的分组，清空搜索后恢复原来的折叠
@@ -101,7 +101,8 @@ const SET_SEARCH = (page, text) =>
     return { diff: Math.round(at.left - qt.left), border: cs.borderLeftWidth };
   });
   check('回答文字比提问多缩进 ≥ 20px（约两个字）', indent.diff >= 20, `${indent.diff}px`);
-  check('回答有左侧引导线', parseFloat(indent.border) >= 2, indent.border);
+  // v1.4.0：组里已经有脊线了，回答不再单独画一条（两条竖线紧挨着像画错了）
+  check('回答不再单独画引导线', parseFloat(indent.border) === 0, indent.border);
 
   // ---------- 4. 折叠 / 展开 ----------
   await page.evaluate(() => {

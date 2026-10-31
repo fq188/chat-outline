@@ -15,7 +15,7 @@
 
 ![时间线分组与回答缩进](docs/demo-timeline.png)
 
-*按天分组（一级可折叠）→ 每组下面是提问（编号）与回答（缩进 + 左侧引导线）；点「答」可只留提问*
+*按天分组（一级可折叠）→ 组内提问按编号串成一条脊线，回答缩进一行灰色预览；点「答」可只留提问*
 
 ---
 
@@ -25,7 +25,7 @@
 - **时间线分组** —— 按页面上的日期分隔条（今天 / 昨天 / 10月24日）分成一级标题，点标题即折叠；没有日期信息时退回用时间戳里的「月/日」，实在没有就不分组，不留空标题
 - **收起也知道里面是什么** —— 折叠起来的组头右侧会显示**这一组最后一问**的摘要（超出省略）
 - **全部展开 / 全部收起** —— 搜索框下面一条细工具栏，一键收放所有分组，并显示「N 天 · M 轮」
-- **回答也列出来** —— 每条提问下面跟一条回答，缩进两个字 + 左侧引导线，和提问一眼分得开；想看纯清单就点「答」关掉
+- **回答也列出来** —— 每条提问下面跟一行灰色的回答预览，缩进两个字，和提问一眼分得开；想看纯清单就点「答」关掉
 - **点击跳转** —— 平滑滚动到对应消息，并闪一圈绿色描边，一眼定位
 - **滚动跟随** —— 你在页面上滚到哪儿，目录就高亮哪一问
 - **搜索过滤** —— 输入关键词即时筛选并高亮命中词，回车直接跳到第一条命中；命中的分组会自动展开
@@ -130,6 +130,24 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
 ## 更新日志 / Changelog
+
+### v1.4.0 — 目录结构收拾干净了 / A tidier outline
+
+这一版没加新功能，专门解决「看着乱」：层级不一致、日期标签不可信、明明十几条却被折成几个空壳组头。
+
+**改进 / Improvements**
+
+| 中文 | English |
+| --- | --- |
+| **不再有「散条目」**：最前面那几条消息的日期分隔条常常还没渲染出来，以前它们就散在组外面，面板变成「几条散条目 + 几个组头」。现在它们统一归进「更早」组，结构永远是「组头 → 条目 → 组头 → 条目」 | **No more orphan rows**: messages at the very top often have no date divider rendered yet, so they used to float outside any group. They now go into an "Earlier" group, so the structure is always header → rows → header → rows |
+| **日期标签只认可信写法**：`1/2`、`2/3` 这种裸的月/日不再被当成日期分隔条 —— 它们和分数、页码、题号长得一模一样，误伤率太高。真日期改由站点自己的 `<time datetime>` 提供，显示成「1月2日」 | **Only trustworthy date labels**: bare `1/2` / `2/3` are no longer treated as dividers — they look identical to fractions, page counters and question numbers. Real dates now come from the site's own `<time datetime>` and render as "Jan 2" |
+| **日期标签中文化**：`Jun 3, 2025` → `2025年6月3日`，`2025-06-03` → `2025年6月3日` | **Localised date labels**: `Jun 3, 2025` and `2025-06-03` both render as `2025年6月3日` |
+| **小对话不再自动折叠**：原来按「组数 > 3」判断，十一二条的对话也会被折成几个空壳组头；现在要超过 40 条才收起旧分组 | **No more auto-folding on short chats**: the old rule folded whenever there were more than 3 groups, so a 11-question chat collapsed into empty-looking bars. Folding now kicks in past 40 rows |
+| **组内一条脊线**：提问的编号徽章串在同一条竖线上，层级一眼看得出来（回答不再单独画一条引导线，两条竖线紧挨着像画错了） | **A spine inside each group**: numbered badges sit on one vertical line so the hierarchy reads at a glance (answers dropped their own guide line — two lines side by side looked like a bug) |
+| **回答只留一行预览**：目录是用来导航的，不是用来读的；一行灰色文字足够判断要不要跳过去 | **Answers are one-line previews now**: the outline is for navigating, not reading; one muted line is enough to decide whether to jump |
+| **提问里的 LaTeX 噪声清掉**：`\(r=\frac12\)` 显示成 `r=1/2`，反引号、`\command` 一并去掉 | **LaTeX noise stripped from titles**: `\(r=\frac12\)` renders as `r=1/2`; backticks and `\command` are dropped |
+| 图片消息的通用 alt（「用户附件」「uploaded file」）不再拼进标题，直接显示「图片 ×6」 | Generic image alt text ("user attachment", "uploaded file") is no longer glued into the title: it just reads "image ×6" |
+| 条目上的时间只留时分 —— 组头已经写了日期 | Item timestamps keep only `HH:MM`; the date is already in the group header |
 
 ### v1.3.2 — 刚问出的问题一定落在最后 / New questions always land last
 
@@ -333,6 +351,7 @@ Same feature set as v1.1.0 — no new permissions.
 | `dev/mock-virtual.html` | 虚拟列表（只挂视口附近的消息） |
 | `dev/mock-timeline.html` | 带日期分隔条的多天对话 |
 | `dev/mock-append.html` | 追加提问 / 切分支 / 复用消息编号 |
+| `dev/mock-mess.html` | 杂乱现场：日期分隔条缺失 + 假日期「1/2」+ 十几个组 |
 
 ```bash
 cd dev
@@ -342,6 +361,7 @@ npx playwright install chromium
 node test-all.js    # 四场景识别 + 跳转 + 搜索 + 导出
 node test-narrow.js # 三种窗口尺寸下面板布局
 node test-v130.js   # 时间线分组、回答缩进、折叠
+node test-v140.js   # 目录结构一致性（散条目 / 假日期 / 自动折叠）
 node test-v132.js   # 新提问必须落在目录末尾（追加 / 切分支 / 编号复用）
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```

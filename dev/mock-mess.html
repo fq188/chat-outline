@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>杂乱现场复刻 · Mess mock</title>
+    <style>
+      body {
+        margin: 0;
+        font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #fff;
+        color: #222;
+      }
+      #scroller {
+        height: 100vh;
+        overflow-y: auto;
+        padding: 24px 15% 300px;
+        box-sizing: border-box;
+      }
+      article {
+        margin: 12px 0;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #f7f7f8;
+      }
+      article > div[data-message-author-role="user"] {
+        background: #eef4ff;
+      }
+      .sep {
+        display: flex;
+        justify-content: center;
+        margin: 16px 0 4px;
+      }
+      .sep .septxt {
+        font-size: 12px;
+        color: #6b7280;
+        background: #eef0f3;
+        border-radius: 20px;
+        padding: 2px 10px;
+      }
+      .thumbs {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 4px;
+      }
+      .thumbs img {
+        width: 100%;
+        border-radius: 4px;
+        display: block;
+      }
+      .counter {
+        font-size: 11px;
+        color: #9aa0a6;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      复刻用户截图里的杂乱现场（11 轮 / 3 天）：
+        1. 最前面 4 条提问，它们的日期分隔条没渲染出来 → 原来会「散在组外面」；
+        2. 中间插了两条长得像日期的「1/2」「2/3」（其实是题号 / 页码，不是日期）
+           → 原来被当成日期分隔条，把对话劈成三块；
+        3. 十几条的小对话被「组数 > 3」的自动折叠规则折成几个空壳组头。
+      正确的样子应该是：结构一致（每条都有归属）、标签可信、默认不折叠。
+    -->
+    <div id="scroller"></div>
+    <script>
+      (function () {
+        var Q = new URLSearchParams(location.search);
+        var scroller = document.getElementById('scroller');
+        var id = 0;
+        var IMG =
+          'data:image/svg+xml;utf8,' +
+          encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="#dbe4f0"/><text x="60" y="50" font-size="12" text-anchor="middle" fill="#5b6b82">exam</text></svg>'
+          );
+
+        function sep(text) {
+          var d = document.createElement('div');
+          d.className = 'sep';
+          var s = document.createElement('span');
+          s.className = 'septxt';
+          s.textContent = text;
+          d.appendChild(s);
+          scroller.appendChild(d);
+        }
+
+        // opts.imgs：用户消息里塞几张图片（只有图、没有文字）
+        function turn(qText, aText, opts) {
+          opts = opts || {};
+          var qArt = document.createElement('article');
+          qArt.setAttribute('data-testid', 'conversation-turn-' + id);
+          var qDiv = document.createElement('div');
+          qDiv.setAttribute('data-message-author-role', 'user');
+          if (opts.imgs) {
+            var g = document.createElement('div');
+            g.className = 'thumbs';
+            for (var k = 0; k < opts.imgs; k += 1) {
+              var im = document.createElement('img');
+              im.src = IMG;
+              im.alt = '用户附件';
+              g.appendChild(im);
+            }
+            qDiv.appendChild(g);
+          } else {
+            qDiv.textContent = qText;
+          }
+          qArt.appendChild(qDiv);
+          scroller.appendChild(qArt);
+          id += 1;
+
+          var aArt = document.createElement('article');
+          aArt.setAttribute('data-testid', 'conversation-turn-' + id);
+          var aDiv = document.createElement('div');
+          aDiv.setAttribute('data-message-author-role', 'assistant');
+          aDiv.textContent = aText;
+          aArt.appendChild(aDiv);
+          scroller.appendChild(aArt);
+          id += 1;
+        }
+
+        // —— 最前面 4 条：日期分隔条缺失 ——
+        turn('怎么计算', '先看方程组的系数矩阵，再判断是不是恰当方程。');
+        turn('（4）具体一阶方程组——第二组 Q2 用图片公式怎么求解', '把第二组单独抽出来，按恰当方程的路子走。');
+        turn('为什么他要分式分解成这样', '为了凑出全微分的形式，分子要拆成两部分。');
+        turn(
+          '第五题：Frobenius 级数解——`exam1.jpg` 第 5 题 5. 第一组解：取 \\(r=\\frac12\\) 为啥不列…',
+          '因为 r=1/2 只有一个根，第二个解要用降阶法。'
+        );
+
+        // —— 假日期：题号 / 页码，不是日期 ——
+        sep('1/2');
+        for (var i = 0; i < 5; i += 1) {
+          turn('', '按图片里的题目逐条算：先整理系数，再代入初值。', { imgs: 6 });
+        }
+        sep('2/3');
+        turn('', '这一组只有一张图，按同样步骤处理。', { imgs: 2 });
+
+        // —— 真日期 ——
+        sep('今天');
+        turn(
+          'HW_07.pdf PDF Lec 16 Sturm-Liouville problem(1).pdf PDF 详细求解',
+          'Sturm-Liouville 问题的核心是自伴算子的特征值性质。'
+        );
+
+        if (Q.get('start') !== 'top') scroller.scrollTop = scroller.scrollHeight;
+      })();
+    </script>
+  </body>
+</html>

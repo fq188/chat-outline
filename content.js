@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.3.2)
+ * 对话目录 · Chat Outline  (v1.4.0)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -253,7 +253,9 @@
       });
       if (imgs.length) {
         const alt = (imgs[0].getAttribute('alt') || '').trim().replace(/\s+/g, ' ');
-        const generic = !alt || /^(image|picture|photo|uploaded image|图片|已上传的图片|图像)$/i.test(alt);
+        const generic =
+          !alt ||
+          /^(image|picture|photo|uploaded image|uploaded file|attachment|file|图片|已上传的图片|图像|附件|用户附件)$/i.test(alt);
         const one = generic ? '图片' : `图片：${alt.slice(0, 24)}`;
         parts.push(imgs.length > 1 ? `${one} ×${imgs.length}` : one);
       }
@@ -308,8 +310,11 @@
   /* —— 时间线：从页面里找「日期分隔条」，把对话按天分组 —— */
   // ChatGPT / Gemini / Claude 这类站点会在两轮之间插一条「今天 / 昨天 / 10月24日」
   // 的分隔条。它没有统一的选择器，所以按「短文本 + 长得像日期」来认。
+  // 只认「几乎不可能是别的东西」的写法。
+  // 裸的「1/2」「2/3」不认 —— 它既是美式月/日，也常是分数、页码、题号，
+  // 误伤率太高；真日期交给站点自己的 <time datetime> 去说（见 dayFromTime）
   const DAY_RE =
-    /^(?:(?:今天|昨天|前天|today|yesterday)|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}(?:,\s*\d{4})?|(?:\d{4}年)?\d{1,2}月\d{1,2}日|(?:\d{4}[-/])?\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)$/i;
+    /^(?:(?:今天|昨天|前天|今天早些时候|today|yesterday)|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}(?:,\s*\d{4})?|(?:\d{4}年)?\d{1,2}月\d{1,2}日|\d{4}[-/]\d{1,2}[-/]\d{1,2})$/i;
 
   // 「这是一条消息」的通用标记：日期分隔条绝不能长在它里面
   const MSG_SEL =
@@ -319,6 +324,34 @@
   function dayFromTime(t) {
     const m = /^(\d{1,2})\/(\d{1,2})\b/.exec(String(t || ''));
     return m ? `${parseInt(m[1], 10)}月${parseInt(m[2], 10)}日` : '';
+  }
+
+  // 日期统一成中文能读的样子：1/2 → 1月2日，Jun 3, 2025 → 2025年6月3日。
+  // 站点给什么写法都有，直接照抄到组头上，用户看着就是一堆乱码
+  const MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  function fmtDay(label) {
+    const s = String(label || '').trim();
+    if (!s) return '';
+    let m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(s);
+    if (m) return `${m[1]}年${+m[2]}月${+m[3]}日`;
+    m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/.exec(s);
+    if (m) {
+      const y = +m[3] < 100 ? 2000 + +m[3] : +m[3];
+      return `${y}年${+m[1]}月${+m[2]}日`;
+    }
+    m = /^(\d{1,2})[-/](\d{1,2})$/.exec(s);
+    if (m) return `${+m[1]}月${+m[2]}日`;
+    m = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,\s*(\d{4}))?$/i.exec(s);
+    if (m) {
+      const i = MON.indexOf(m[1].toLowerCase());
+      if (i >= 0) return `${m[3] ? m[3] + '年' : ''}${i + 1}月${+m[2]}日`;
+    }
+    return s;
+  }
+
+  // 「更早」组的名字（比前面所有日期都早、但分隔条没渲染出来的那几条）
+  function earlierLabel() {
+    return /^zh/i.test(document.documentElement.lang || navigator.language || '') ? '更早' : 'Earlier';
   }
 
   function normalizeDay(txt) {
@@ -614,6 +647,7 @@
     --fg: #1f2328;
     --muted: #6b7280;
     --line: #e6e8eb;
+    --rail: #ccd1d8;
     --hover: #f2f4f6;
     --active: #e7f6ef;
     --accent: #0e8f6f;
@@ -629,6 +663,7 @@
     --fg: #ececf1;
     --muted: #9ba1a6;
     --line: #3a3b3f;
+    --rail: #54575e;
     --hover: #2b2c30;
     --active: #1b3b31;
     --accent: #2ec08f;
@@ -713,14 +748,21 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 11px; font-weight: 600; color: var(--muted);
     border: 1px solid var(--line); border-radius: 6px; padding: 0 3px;
+    /* 实心底色把组内那条脊线挡在徽章后面，看着才像「节点穿在线上」 */
+    background: var(--bg);
   }
+  .item:hover .idx { background: var(--hover); }
+  .item.active .idx { background: var(--active); }
   .item.asst .idx { font-weight: 500; opacity: .75; }
   .body { min-width: 0; flex: 1 1 auto; }
   .txt {
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden; word-break: break-word;
   }
-  .item.asst .txt { color: var(--muted); font-size: 12px; }
+  .item.asst .txt {
+    color: var(--muted); font-size: 12px;
+    -webkit-line-clamp: 1;   /* 回答只留一行预览：目录是用来导航的，不是用来读的 */
+  }
   .txt mark { background: var(--active); color: var(--accent); border-radius: 3px; padding: 0 1px; font-weight: 600; }
   .meta { color: var(--muted); font-size: 11px; margin-top: 1px; }
 
@@ -756,7 +798,13 @@
   }
   .grp.folded .grphead .gpeek { display: block; }
   .grp.folded .grphead .gline { display: none; }
-  .grpbody { list-style: none; margin: 0; padding: 0; }
+  .grp + .grp { margin-top: 7px; }
+  .grpbody { list-style: none; margin: 0; padding: 0; position: relative; z-index: 0; }
+  /* 组内一条细脊线，把条目串成一列「节点」—— 分组和条目的层级一眼看得出来 */
+  .grpbody::before {
+    content: ''; position: absolute; left: 16px; top: 5px; bottom: 5px;
+    width: 1px; background: var(--rail); z-index: -1;
+  }
 
   /* 分组工具条：全部展开 / 全部收起（只在有多组时出现） */
   .gbar {
@@ -774,15 +822,17 @@
   .gbar .gact:hover { background: var(--hover); color: var(--fg); border-color: var(--muted); }
   .gbar .gact:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
   .grp.folded .grpbody { display: none; }
-  /* 回答：整体缩进约两个字 + 左侧引导线，和提问一眼分得开 */
+  /* 回答：整体缩进约两个字，和提问一眼分得开。
+     不再单独画引导线 —— 组里已经有一条脊线了，两条紧挨着的竖线看着像画错了 */
   .item.asst {
-    margin-left: 1.1em;
+    margin-left: 1.2em;
     padding-left: calc(4px + .9em);
-    border-left: 2px solid var(--line);
-    border-radius: 0 8px 8px 0;
+    border-radius: 8px;
   }
-  .item.asst:hover { border-left-color: var(--muted); }
-  .item.asst.active { border-left-color: var(--accent); }
+  .item.asst .idx {
+    border-color: transparent; background: none;
+    font-weight: 400; opacity: .55;
+  }
   .empty { padding: 22px 14px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.7; }
   .foot { border-top: 1px solid var(--line); flex: 0 0 auto; }
   .adv { padding: 6px 10px 8px; }
@@ -1185,7 +1235,10 @@
     // 时间线归属：页面上有日期分隔条就按它分组，没有就退回时间戳里的「月/日」
     const seps = daySeps();
     for (const it of all) {
-      it.day = seps.length ? dayLabelFor(it.el, seps) : dayFromTime(it.time);
+      // 先看页面上有没有日期分隔条；那条缺失（还没渲染 / 被虚拟列表卸载）时，
+      // 退一步用这条消息自己的 <time datetime>，不要整条留空
+      const bySep = seps.length ? dayLabelFor(it.el, seps) : '';
+      it.day = fmtDay(bySep || dayFromTime(it.time));
     }
 
     // 并入档案：本轮看到的更新，没看到的保留（说明被虚拟列表卸载了）
@@ -1237,6 +1290,14 @@
     // 日期标签在时间线上只会往前走。同一个标签「死灰复燃」（今天 → 1/2 → 今天），
     // 中间那段就是误识别，并回前一段，免得同一天被切成三块
     fixDays(items);
+
+    // 结构一致性：开头那几条更早的消息，它们的日期分隔条往往还没渲染出来。
+    // 让它们散在组外面，面板就成了「几条散条目 + 几个组头」，一眼看着就是乱的
+    const firstDay = items.findIndex((i) => i.day);
+    if (firstDay > 0) {
+      const label = earlierLabel();
+      for (let i = 0; i < firstDay; i += 1) items[i].day = label;
+    }
 
     // 重新编号：DOM 序号在虚拟列表下不可靠，改成按合并后的顺序数第几次提问
     let q = 0;
@@ -1952,22 +2013,41 @@
     for (const it of list) {
       const label = it.day || '';
       if (!cur || cur.label !== label) {
-        cur = { label, items: [], rounds: 0, lastQ: '' };
+        cur = { label, items: [], rounds: 0, lastQ: '', qFrom: 0, qTo: 0 };
         groups.push(cur);
       }
       cur.items.push(it);
       if (it.role === 'user') {
         cur.rounds += 1;
         cur.lastQ = it.text; // 折叠时用「这一组最后一问」当摘要
+        if (!cur.qFrom) cur.qFrom = it.q;
+        cur.qTo = it.q;
       }
     }
     return groups;
   }
 
+  // 提问里常混着 LaTeX 和反引号（用户直接把题目贴进来），原样显示就是一堆 \frac、\(、
+  // 在 216px 的窄面板里尤其占地方。只做最小清洗，把能读的部分留下
+  function prettyText(s) {
+    const src = String(s || '');
+    if (!/[\\$`]/.test(src)) return src;
+    const t = src
+      .replace(/\\[dt]?frac\s*\{([^{}]{1,14})\}\s*\{([^{}]{1,14})\}/g, '$1/$2')
+      .replace(/\\[dt]?frac\s*(\d)\s*(\d)/g, '$1/$2')
+      .replace(/\\[()[\]]/g, '')
+      .replace(/\\[,;:! ]/g, ' ')
+      .replace(/\\[a-zA-Z]+\s*/g, '')
+      .replace(/[$`]/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return t || src;
+  }
+
   // 折叠摘要：去掉「昨天」「第二问：」这类前缀，只留问题本身
   // （组头已经写了日期，摘要里再来一遍「昨天」很啰嗦）
   function peekText(q, label) {
-    let t = String(q || '').replace(/\s+/g, ' ').trim();
+    let t = prettyText(String(q || '')).replace(/\s+/g, ' ').trim();
     if (label && t.indexOf(label) === 0) {
       const rest = t.slice(label.length).replace(/^[\s:：·,，.。\-—]+/, '');
       if (rest) t = rest;
@@ -1987,8 +2067,12 @@
       return;
     }
     const rounds = groups.reduce((n, g) => n + g.rounds, 0);
+    // 有「更早」这种占位组时不能说「N 天」，改成中性的「N 段」
+    const unit = labeled.some((g) => g.label === earlierLabel()) ? '段' : '天';
     $gbar.hidden = false;
-    $gsum.textContent = query ? `${labeled.length} 天有命中 · ${rounds} 轮` : `${labeled.length} 天 · ${rounds} 轮`;
+    $gsum.textContent = query
+      ? `${labeled.length} ${unit}有命中 · ${rounds} 轮`
+      : `${labeled.length} ${unit} · ${rounds} 轮`;
     // 搜索时所有分组都是强制展开的，「全部收起」点了也看不见效果，先藏起来
     $btnFoldAll.hidden = !!query;
     const allFolded = labeled.every((g) => foldedDays.has(g.label));
@@ -2011,13 +2095,15 @@
   function itemHtml(it) {
     const isUser = it.role === 'user';
     const idx = isUser ? String(it.q) : '答';
-    const meta = it.time || '';
+    // 组头已经写了日期，条目上只留时分
+    const meta = String(it.time || '').replace(/^\d{1,2}\/\d{1,2}\s*/, '');
+    const disp = prettyText(it.text);
     return `<li class="item${isUser ? ' user' : ' asst'}${it.key === activeKey ? ' active' : ''}" data-key="${esc(
       it.key
-    )}" title="${esc(it.text.slice(0, 300))}" tabindex="0" role="button">
+    )}" title="${esc(disp.slice(0, 300))}" tabindex="0" role="button">
       <span class="idx">${esc(idx)}</span>
       <span class="body">
-        <span class="txt">${highlightText(it.text, query)}</span>
+        <span class="txt">${highlightText(disp, query)}</span>
         ${meta ? `<span class="meta">${esc(meta)}</span>` : ''}
       </span>
     </li>`;
@@ -2046,9 +2132,10 @@
     loadFolds();
     const groups = buildGroups(list);
 
-    // 分组多的时候（跨好几天）先把旧的收起来，只留最近一组展开，
-    // 不然一进面板就是几百条。用户展开过就尊重用户的选择。
-    if (!query && !foldAutoDone && !foldedDays.size && groups.length > 3) {
+    // 只有「条目真的很多」才先把旧的收起来，只留最近一组展开。
+    // 原来按「组数 > 3」判断，十几条的小对话也会被折成几个空壳组头，
+    // 看着就像坏了 —— 现在按条目数判断，几十条以内一律全展开
+    if (!query && !foldAutoDone && !foldedDays.size && list.length > 40 && groups.length > 2) {
       foldAutoDone = true;
       for (let i = 0; i < groups.length - 1; i += 1) {
         if (groups[i].label) foldedDays.add(groups[i].label);
@@ -2063,10 +2150,14 @@
         if (!g.label) return body;
         // 搜索时全部展开，否则「命中了却看不见」会让人以为没搜到
         const folded = !query && foldedDays.has(g.label);
+        // 范围只放在 tooltip 里：216px 的窄面板上，组头再塞一段文字就挤成一团了
+        const range = g.qFrom && g.qTo ? (g.qFrom === g.qTo ? `第 ${g.qFrom} 问` : `第 ${g.qFrom}–${g.qTo} 问`) : '';
         return `<li class="grp${folded ? ' folded' : ''}" data-day="${esc(g.label)}">
           <div class="grphead" role="button" tabindex="0" data-act="fold" data-day="${esc(
             g.label
-          )}" aria-expanded="${!folded}" title="折叠 / 展开「${esc(g.label)}」">
+          )}" aria-expanded="${!folded}" title="${esc(
+            `折叠 / 展开「${g.label}」${range ? ' · ' + range : ''}`
+          )}">
             <span class="caret">▾</span>
             <span class="glabel">${esc(g.label)}</span>
             <span class="gmeta">${g.rounds ? `${g.rounds} 轮` : `${g.items.length} 条`}</span>
