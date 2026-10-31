@@ -1527,13 +1527,17 @@
       if (lastUser && lastUser.key.indexOf('api:') !== 0) scheduleApiRefetch();
     }
 
-    // 时间线归属：页面上有日期分隔条就按它分组，没有就退回时间戳里的「月/日」
+    // 时间线归属：页面上有日期分隔条就按它分组，没有就退回时间戳里的「月/日」。
+    // 已经拿到接口那条（api:true）时以接口的 create_time 为准 —— 两个来源说法不一样
+    // （页面是「今天」、接口是「10月24日」）会把同一天劈成两组，必须只用一套说法。
     const seps = daySeps();
     for (const it of all) {
+      const prevApi = archive.get(it.key);
+      const apiDay = prevApi && prevApi.api && prevApi.day ? prevApi.day : '';
       // 先看页面上有没有日期分隔条；那条缺失（还没渲染 / 被虚拟列表卸载）时，
       // 退一步用这条消息自己的 <time datetime>，不要整条留空
       const bySep = seps.length ? dayLabelFor(it.el, seps) : '';
-      it.day = fmtDay(bySep || dayFromTime(it.time));
+      it.day = apiDay || fmtDay(bySep || dayFromTime(it.time));
     }
 
     // 并入档案：本轮看到的更新，没看到的保留（说明被虚拟列表卸载了）
