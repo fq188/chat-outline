@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>快速通道仿真 · API mock</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #fff;
+        color: #222;
+      }
+      #scroller {
+        height: 100vh;
+        overflow-y: auto;
+      }
+      #inner {
+        position: relative;
+      }
+      article {
+        position: absolute;
+        left: 12%;
+        right: 12%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #f7f7f8;
+        overflow: hidden;
+      }
+      article > div[data-message-author-role="user"] {
+        background: #eef4ff;
+        margin: -10px -12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      仿真 ChatGPT 的虚拟列表：30 条消息，只挂视口附近那几条，滚远了就卸载。
+      但 /backend-api/conversation/<id> 能一次返回完整的 30 条。
+      插件应该：不滚动页面，直接把这 30 条全排进目录；点没渲染的条目时再滚过去找。
+    -->
+    <div id="scroller"><div id="inner"></div></div>
+    <script>
+      (function () {
+        var msgs = window.__MSGS__ || [];
+        var scroller = document.getElementById('scroller');
+        var inner = document.getElementById('inner');
+        var H = 120;
+        inner.style.height = msgs.length * H + 'px';
+        var mounted = new Map();
+
+        function render() {
+          var view = scroller.clientHeight || 800;
+          var st = scroller.scrollTop;
+          var lo = st - view * 0.3;
+          var hi = st + view;
+          var want = new Set();
+          msgs.forEach(function (m, i) {
+            var top = i * H;
+            if (top + H > lo && top < hi) want.add(i);
+          });
+          mounted.forEach(function (el, i) {
+            if (!want.has(i)) {
+              el.remove();
+              mounted.delete(i);
+            }
+          });
+          want.forEach(function (i) {
+            if (mounted.has(i)) return;
+            var m = msgs[i];
+            var art = document.createElement('article');
+            art.setAttribute('data-testid', 'conversation-turn-' + i);
+            art.style.top = i * H + 'px';
+            art.style.height = H - 12 + 'px';
+            var div = document.createElement('div');
+            div.setAttribute('data-message-author-role', m.role);
+            div.textContent = m.text;
+            art.appendChild(div);
+            inner.appendChild(art);
+            mounted.set(i, art);
+          });
+        }
+
+        var ticking = false;
+        scroller.addEventListener(
+          'scroll',
+          function () {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(function () {
+              ticking = false;
+              render();
+            });
+          },
+          { passive: true }
+        );
+
+        render();
+        scroller.scrollTop = scroller.scrollHeight;
+        render();
+
+        window.__scrolls = 0;
+        scroller.addEventListener('scroll', function () {
+          window.__scrolls += 1;
+        });
+      })();
+    </script>
+  </body>
+</html>

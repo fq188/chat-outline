@@ -92,7 +92,7 @@
 
 识别能力：内置 ChatGPT、Gemini、Claude 等常用站点的精确适配；对未适配的站点，会自动尝试 30 多种通用标记和「编辑按钮」结构启发式识别；仍不准时可在面板底部手动填写 CSS 选择器（按域名记忆）。
 
-隐私：完全本地运行，没有任何网络请求，不收集、不传输任何数据。开源可查：https://github.com/fq188/chat-outline
+隐私：不向任何第三方发送数据，不采集、不上报。唯一请求打向当前站点自己的域名（ChatGPT 上读取该对话的会话数据，让长对话目录一次加载完整），接口不可用时自动退回纯页面解析。无后端、无账号。开源可查：https://github.com/fq188/chat-outline
 
 ## Full description (English, en-US)
 
@@ -111,11 +111,11 @@ Hunting for "that one question" in a long conversation is the biggest time sink.
 
 Detection: precise adapters for major sites, plus 30+ universal patterns and a structural heuristic anchored on the "edit" button, so even unsupported sites usually work. If detection misses, you can enter a custom CSS selector in the panel (remembered per domain).
 
-Privacy: 100% local — no network requests, no data collection. Open source: https://github.com/fq188/chat-outline
+Privacy: nothing is sent to any third party — no collection, no reporting. The only request goes to the site's own domain (on ChatGPT it reads that conversation's data so a long thread fills the outline in one go); if the endpoint is unavailable the extension falls back to pure page parsing. No backend, no account. Open source: https://github.com/fq188/chat-outline
 
 ## 审核备注（Notes for certification）
 
-本扩展无需账号、无付费功能、无后端服务。测试方法：打开 https://chatgpt.com （或 manifest.json 中 matches 列出的任一站点）并进行任意对话，页面右侧会出现「目录」悬浮标签，点击或按 Alt+Q 打开面板，即可看到提问列表；点击条目跳转，点 ⤓ 导出 Markdown。扩展仅申请 storage 权限，用于保存界面偏好；content script 只在 manifest 列出的对话站点注入，不修改页面内容、不读取账号数据。全部识别在本地完成，无网络请求。
+本扩展无需账号、无付费功能、无后端服务。测试方法：打开 https://chatgpt.com （或 manifest.json 中 matches 列出的任一站点）并进行任意对话，页面右侧会出现「目录」悬浮标签，点击或按 Alt+Q 打开面板，即可看到提问列表；点击条目跳转，点 ⤓ 导出 Markdown。扩展仅申请 storage 权限，用于保存界面偏好；content script 只在 manifest 列出的对话站点注入，不修改页面内容、不读取账号数据。识别与渲染全部在本地完成。唯一的外部请求是向当前站点自己的域名读取该对话的会话数据（ChatGPT 的 `/backend-api/conversation/<id>`），目的是让长对话的目录一次性加载完整；这与页面自身发出的同源请求完全相同，使用用户当前登录态，不发送任何附加信息，也不发往任何第三方。接口不可用（未登录 / 变更 / 超时）时立即退回纯页面解析，不再发起请求。
 
 ## 本次更新内容（Release notes，v1.2.2）
 

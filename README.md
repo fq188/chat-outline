@@ -22,7 +22,7 @@
 ## 功能
 
 - **提问清单** —— 把整段对话里的提问按 1、2、3… 列出来，显示前两行
-- **时间线分组** —— 按页面上的日期分隔条（今天 / 昨天 / 10月24日）分成一级标题，点标题即折叠；没有日期信息时退回用时间戳里的「月/日」，实在没有就不分组，不留空标题
+- **时间线分组** —— 按天分成一级标题（今天 / 昨天 / 10月24日），点标题即折叠；ChatGPT 上直接用会话数据里的时间戳，其他站点退回页面上的日期分隔条，实在没有就不分组，不留空标题
 - **收起也知道里面是什么** —— 折叠起来的组头右侧会显示**这一组最后一问**的摘要（超出省略）
 - **全部展开 / 全部收起** —— 搜索框下面一条细工具栏，一键收放所有分组，并显示「N 天 · M 轮」
 - **回答也列出来** —— 每条提问下面跟一行灰色的回答预览，缩进两个字，和提问一眼分得开；想看纯清单就点「答」关掉
@@ -31,7 +31,8 @@
 - **搜索过滤** —— 输入关键词即时筛选并高亮命中词，回车直接跳到第一条命中；命中的分组会自动展开
 - **导出 Markdown** —— 把问答全文导出成 `.md`，方便存档、写周报、贴进笔记
 - **自动适配深浅色** —— 跟随页面主题，面板不刺眼
-- **完全本地** —— 没有任何网络请求，不发一个字节出去
+- **秒出目录** —— ChatGPT 上直接读站点自己的会话数据，一次请求拿全整段对话，不用等页面滚动加载（接口不通时自动退回滚动补扫）
+- **不联网** —— 不向任何第三方发送数据；唯一的请求打向站点自己的域名，用的是你本来就登录着的身份
 
 ## 安装
 
@@ -106,8 +107,9 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 已知限制
 
-- **虚拟滚动**：ChatGPT 这类站点只渲染视口附近的消息，未挂载的历史抓不到。往上滚动加载更多后，目录会自动补全。
-- **时间戳**：只有页面本身渲染了时间才会显示，扩展不会去猜时间。
+- **虚拟滚动**：ChatGPT 这类站点只渲染视口附近的消息。ChatGPT 上扩展会直接读会话数据，一次拿全；其他站点仍靠自动滚动补扫，**需要滚一遍页面**（对话越长越慢），几十条的对话大约几秒到十几秒。
+- **未登录 / 接口变更**：读不到会话数据时不会报错，静默退回滚动补扫 —— 功能不缺，只是慢。
+- **时间戳**：只有页面本身渲染了时间、或站点接口里带了 `create_time` 才会显示，扩展不会去猜时间。
 - **改写消息**：编辑某条提问或重新发送之后，页面上被丢掉的那几轮会从目录里一起移除 —— 因为它们已经不属于这段对话了。
 - **A/B 测试**：各家前端常灰度发布，同一站点不同账号的 DOM 可能不同。识别不到时按 `Alt+Q` 打开面板，在「选择器设置」里手填选择器即可临时救急，也欢迎提 issue 附上 DOM 结构。
 
@@ -130,6 +132,33 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 选择器怎么找：右键某条提问 → 检查，在控制台用 `document.querySelectorAll('选择器')` 验证条数。
 
 ## 更新日志 / Changelog
+
+### v1.5.0 — 目录不用靠滚动加载了 / No more scroll-to-load
+
+长对话里目录一直长不全，是因为 ChatGPT 只把视口附近那几条消息挂在页面上（虚拟列表），滚远了就卸载。以前只能靠「自动上下滚动一遍」把消息逼出来，几十条对话要滚十几趟、十几秒，屏幕还跟着跳。
+
+这一版换了个办法：**直接向站点要这段对话的完整数据。**
+
+**改进 / Improvements**
+
+| 中文 | English |
+| --- | --- |
+| **一次请求拿全目录**：读取 `/backend-api/conversation/<id>`，沿 `current_node` 的 `parent` 一路回溯，就得到当前分支的完整线性对话。几十条对话通常 **1 秒内**全部进目录，不滚动、不闪烁 | **One request, whole outline**: the extension now reads `/backend-api/conversation/<id>` and walks `parent` back from `current_node`, giving the full linear thread of the current branch. A 50-message chat fills in **under a second**, with no scrolling and no flicker |
+| **认证自动处理**：先取 `/api/auth/session` 的 `accessToken` 带上 `Authorization`，取不到就退回纯 Cookie 请求 —— 两条路都走不通才算失败 | **Auth handled for you**: it first grabs `accessToken` from `/api/auth/session` and sends it as `Authorization`; if that is unavailable it retries cookie-only. Only when both fail is the fast path considered dead |
+| **失败静默回退**：接口 401、结构变了、8 秒没响应，都会**立刻**交回原来的滚动补扫，功能一点不少，只是慢回原来的样子（不会弹错误、不会卡住） | **Silent fallback**: a 401, a changed payload, or an 8-second timeout immediately hands control back to the original scroll sweep. Nothing breaks and nothing pops up — it is just as slow as before |
+| **页面滚动次数从十几次降到 1 次**（实测：15 问的对话，旧方案滚动 11 趟，新方案 1 趟） | **Page scrolls drop from a dozen to about one** (measured: a 15-question chat took 11 scroll passes before, 1 now) |
+| **接口条目与页面条目自动配对**：去掉「[图片 ×6]」这类方括号标注和空白后按「角色 + 文本前缀」双向匹配，页面滚到哪、哪条被卸载，目录里的位置都不变 | **API rows are matched to DOM rows**: after stripping bracketed markers like "[image ×6]" and all whitespace, rows are paired by role plus text prefix in both directions — so the outline never shifts no matter which messages the virtual list unmounts |
+| **新消息会安静地补拉**：对话里冒出接口快照还没有的新提问时，会在后台再拉一次（最多 3 次），不打断你 | **New messages re-fetch quietly**: if a new question appears that the API snapshot does not have yet, the extension re-fetches in the background (up to 3 times) without interrupting you |
+| **日期直接来自接口的 `create_time`**：分成「今天 / 昨天 / 前天 / 10月24日」，比解析页面分隔条更准 | **Dates come from the API's `create_time`**: grouped as Today / Yesterday / Day before / Oct 24 — more reliable than scraping on-page dividers |
+| 提示只在确实省了事的时候出现一次：「已直接读取整段对话（N 条提问），不用滚动加载」 | The toast appears once, and only when it genuinely saved you work: "read the whole conversation (N questions) — no scrolling needed" |
+
+**说明 / Notes**
+
+| 中文 | English |
+| --- | --- |
+| 快速通道目前只对 **ChatGPT**（`chatgpt.com` / `chat.openai.com`）启用；其他站点没有稳定的公开接口，仍走滚动补扫，行为与 v1.4.0 一致 | The fast path is currently enabled for **ChatGPT** only (`chatgpt.com` / `chat.openai.com`). Other sites have no stable public endpoint and keep using the scroll sweep, exactly as in v1.4.0 |
+| 只读当前分支：`parent` 回溯走的是你正在看的那条路径，不会把其他分支的旧提问混进来 | Only the current branch is read: walking `parent` follows the path you are actually looking at, so other branches never leak in |
+| 不发任何数据到第三方，请求只打向站点自己的域名 | Nothing is sent to a third party; every request goes to the site's own domain |
 
 ### v1.4.0 — 目录结构收拾干净了 / A tidier outline
 
@@ -363,14 +392,16 @@ node test-narrow.js # 三种窗口尺寸下面板布局
 node test-v130.js   # 时间线分组、回答缩进、折叠
 node test-v140.js   # 目录结构一致性（散条目 / 假日期 / 自动折叠）
 node test-v132.js   # 新提问必须落在目录末尾（追加 / 切分支 / 编号复用）
+node test-v150.js   # 快速通道：一次请求拿全目录，接口失败要退回滚动补扫
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```
 
 ## 隐私
 
-- 无任何网络请求，不采集、不上报
+- **不向任何第三方发送数据**，不采集、不上报。唯一的请求发往站点自己的域名（ChatGPT 上读 `/backend-api/conversation/<id>`，用你当前登录的会话），目的是把目录一次拿全；接口不通时不做任何请求，退回纯页面解析
 - 只用 `chrome.storage.local` 保存面板开关、显示偏好和自定义选择器
-- 不读取页面以外的任何数据，不申请 `cookies`、`tabs` 等权限
+- 不读取页面以外的任何数据，不申请 `cookies`、`tabs`、`host_permissions` 等权限 —— 请求走的是 content script 的同源 `fetch`，没有额外授权
+- 读到的对话内容只在当前页面内存里用，不写盘、不外传
 
 ## 文件结构
 
@@ -388,7 +419,7 @@ docs/             截图
 
 **Chat Outline** is a Manifest V3 browser extension that adds a floating outline to AI chat sites (ChatGPT, Gemini, Claude, Copilot, DeepSeek, Kimi, Doubao, and 60+ more). It lists every question you asked in the current conversation; click one to smooth-scroll to it and highlight it. Also supports search, scroll-spy highlighting, showing assistant turns with timestamps, and exporting the whole conversation as Markdown.
 
-Detection uses a three-tier fallback: exact per-site selectors → ~30 universal "user message" patterns → a structural heuristic anchored on the edit button. Everything runs locally; the extension makes no network requests.
+Detection uses a three-tier fallback: exact per-site selectors → ~30 universal "user message" patterns → a structural heuristic anchored on the edit button. Nothing is sent to any third party. On ChatGPT the extension reads the conversation from the site's own `/backend-api/conversation/<id>` so a long thread fills the outline in one go; everywhere else it parses the page only, and it falls back to page-only parsing whenever that endpoint is unavailable.
 
 Load unpacked: `chrome://extensions` (or `edge://extensions`) → enable Developer mode → Load unpacked → pick this folder.
 

@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.4.0)
+ * 对话目录 · Chat Outline  (v1.5.0)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -1025,6 +1025,281 @@
     return attr ? 'k:' + attr : 't:' + role + ':' + hashText(text);
   }
 
+  /* ======================= 8.6 快速通道：直接读会话数据 ======================= */
+  // 虚拟列表逼着我们上下滚动才能把目录凑齐 —— 一段几十轮的对话要滚十几秒，
+  // 页面还会明显地跳来跳去，用户是看得见的。能读到站点自己的会话数据的话，
+  // 一次请求就有整段对话：不滚动、不闪烁，也不受「只渲染视口附近」的限制。
+  //
+  // 读不到（没登录 / 接口变了 / 不是这个站点）就安静地退回滚动补扫，
+  // 功能一点不受影响，只是慢回原来的样子。
+  let apiThread = null; // 全量条目（按对话顺序），null = 没拿到
+  let apiState = 'idle'; // idle | loading | ok | failed
+  let apiForHref = '';
+  let apiRetryAt = 0;
+  let apiRefetchLeft = 3;
+  let apiStartAt = 0;
+  let apiWatchdog = null; // 快速通道超时兜底：到点还没结果就直接交回滚动补扫
+
+  function clockOf(ts) {
+    const d = new Date((ts || 0) * 1000);
+    if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  // 时间戳 → 与页面分隔条同一套说法（今天 / 昨天 / 10月24日），
+  // 两边说法不一致的话，同一天会被 fixDays 之外的逻辑切碎
+  function dayOfTs(ts) {
+    const d = new Date((ts || 0) * 1000);
+    if (isNaN(d.getTime()) || !ts) return '';
+    const at = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((at(new Date()) - at(d)) / 86400000);
+    if (diff === 0) return '今天';
+    if (diff === 1) return '昨天';
+    if (diff === 2) return '前天';
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+
+  // ChatGPT 的 content.parts 可能混着字符串和图片引用
+  function cgptParts(c) {
+    const parts = (c && c.parts) || [];
+    const txt = [];
+    let imgs = 0;
+    for (const p of parts) {
+      if (typeof p === 'string') {
+        if (p.trim()) txt.push(p);
+      } else if (p && typeof p === 'object') {
+        if (p.asset_pointer || p.content_type === 'image_asset_pointer') imgs += 1;
+        else if (p.text) txt.push(String(p.text));
+      }
+    }
+    if (txt.length) return txt.join('\n').trim();
+    if (imgs) return imgs > 1 ? `[图片 ×${imgs}]` : '[图片]';
+    return String((c && c.text) || '').trim();
+  }
+
+  async function cgptThread() {
+    const m = /\/c\/([0-9a-zA-Z-]{8,})/.exec(location.pathname);
+    if (!m) return null;
+    const hdr = {};
+    try {
+      const s = await fetch('/api/auth/session', { credentials: 'include' });
+      if (s.ok) {
+        const j = await s.json();
+        if (j && j.accessToken) hdr.authorization = 'Bearer ' + j.accessToken;
+      }
+    } catch (e) {
+      /* 拿不到 token 也再试一把：有些部署只认 cookie */
+    }
+    // 路径只认一种写法，但参数各家版本不一样：先按最标准的来，不成再带上分页参数
+    const urls = [
+      '/backend-api/conversation/' + m[1],
+      '/backend-api/conversation/' + m[1] + '?offset=0&limit=100'
+    ];
+    let data = null;
+    for (const u of urls) {
+      let r = null;
+      try {
+        r = await fetch(u, { credentials: 'include', headers: hdr });
+      } catch (e) {
+        continue;
+      }
+      if (!r || !r.ok) continue;
+      const j = await r.json().catch(() => null);
+      if (j && j.mapping) {
+        data = j;
+        break;
+      }
+    }
+    if (!data) return null;
+    const map = data.mapping;
+    // 从当前节点沿 parent 往回走，得到的就是「这条分支」的线性对话
+    let start = data.current_node;
+    if (!start || !map[start]) {
+      // 没给 current_node：找那个没有 children 的末端节点
+      for (const k in map) {
+        const ch = map[k] && map[k].children;
+        if (!ch || !ch.length) {
+          start = k;
+          break;
+        }
+      }
+    }
+    const out = [];
+    const seen = new Set();
+    let node = start;
+    while (node && map[node] && !seen.has(node)) {
+      seen.add(node);
+      const msg = map[node].message;
+      if (msg && msg.author && /^(user|assistant)$/.test(msg.author.role)) {
+        const t = cgptParts(msg.content);
+        if (t) out.push({ id: msg.id || node, role: msg.author.role, text: t, ts: msg.create_time || 0 });
+      }
+      node = map[node].parent;
+    }
+    out.reverse();
+    return out.length ? out : null;
+  }
+
+  const API_ADAPTERS = { 'chatgpt.com': cgptThread, 'chat.openai.com': cgptThread };
+
+  function applyApiThread(list) {
+    const rows = [];
+    list.forEach((m, i) => {
+      const text = String(m.text || '').replace(/\s+/g, ' ').trim();
+      if (!text) return;
+      rows.push({
+        key: 'api:' + m.id,
+        role: m.role,
+        raw: m.text,
+        text,
+        time: clockOf(m.ts),
+        day: dayOfTs(m.ts),
+        ratio: list.length > 1 ? i / (list.length - 1) : 0,
+        el: null,
+        gone: false,
+        api: true
+      });
+    });
+    if (rows.length < 2) return false;
+    archive.clear();
+    for (const it of rows) archive.set(it.key, it);
+    order = rows.map((i) => i.key);
+    apiThread = rows;
+    apiState = 'ok';
+    apiRefetchLeft = 3;
+    if (apiWatchdog) {
+      clearTimeout(apiWatchdog);
+      apiWatchdog = null;
+    }
+    sweptOnce = true; // 已经是全量，不用再滚
+    sweepAbort = true; // 正在滚的那趟也别滚了
+    sweepResume = null;
+    lastSignature = '';
+    lastCheapSig = '';
+    scan(true, false);
+    return true;
+  }
+
+  // 配对用的文本指纹：去掉「[图片 ×6]」这类方括号标注和所有空白 ——
+  // 接口给的图片消息和页面渲染出来的写法不一样，但去掉之后就都一样了
+  function normMatch(t) {
+    return String(t || '')
+      .replace(/\[[^\]]*\]/g, '')
+      .replace(/[\s\u200b]+/g, '')
+      .slice(0, 60);
+  }
+
+  function apiCandidates() {
+    if (!apiThread) return null;
+    const map = new Map();
+    for (const it of apiThread) {
+      if (!map.has(it.role)) map.set(it.role, []);
+      map.get(it.role).push({ key: it.key, norm: normMatch(it.text), taken: false });
+    }
+    return map;
+  }
+
+  // 页面上这条消息对应 API 里的哪一条：按角色 + 文本前缀配对，一对一消耗。
+  // 图片消息两边去括号后都是空串，就按出现顺序一一对上。
+  function apiKeyOf(cands, it) {
+    if (!cands) return null;
+    const list = cands.get(it.role);
+    if (!list) return null;
+    const n = normMatch(it.text);
+    for (const c of list) {
+      if (c.taken) continue;
+      if (!n && !c.norm) {
+        c.taken = true;
+        return c.key;
+      }
+      if (!n || !c.norm) continue;
+      // 回答在流式生成时，页面上的文字是接口那条的前缀，所以两个方向都要认
+      if (n === c.norm || c.norm.indexOf(n) === 0 || n.indexOf(c.norm) === 0) {
+        c.taken = true;
+        return c.key;
+      }
+    }
+    return null;
+  }
+
+  // 快速通道走不通（接口 401 / 结构变了 / 超时）：把机会立刻还给滚动补扫。
+  // 这里必须主动叫一次 maybeSweep —— 之后页面的扫描几乎都是 quiet（observer 防抖），
+  // 不会再去触发补扫判定，被动等就等于永远等下去。
+  function apiGiveUp() {
+    apiState = 'failed';
+    apiRetryAt = Date.now() + 60000;
+    if (apiWatchdog) {
+      clearTimeout(apiWatchdog);
+      apiWatchdog = null;
+    }
+    if (apiThread || sweptOnce) return;
+    setTimeout(() => {
+      try {
+        maybeSweep();
+      } catch (e) {
+        /* ignore */
+      }
+    }, 0);
+  }
+
+  function maybeApiLoad(force) {
+    if (!force && (apiState === 'loading' || apiState === 'ok')) return;
+    if (!force && Date.now() < apiRetryAt) return;
+    const ad = API_ADAPTERS[location.hostname];
+    if (!ad) return;
+    apiForHref = location.href;
+    apiState = 'loading';
+    apiStartAt = Date.now();
+    const shownBefore = archive.size;
+    if (apiWatchdog) clearTimeout(apiWatchdog);
+    apiWatchdog = setTimeout(() => {
+      apiWatchdog = null;
+      if (apiForHref !== location.href || apiThread) return;
+      if (apiState !== 'loading') return;
+      apiGiveUp();
+    }, 8000);
+    Promise.resolve()
+      .then(ad)
+      .then((list) => {
+        if (apiForHref !== location.href) return;
+        if (!list || !list.length) {
+          apiGiveUp();
+          return;
+        }
+        if (apiWatchdog) {
+          clearTimeout(apiWatchdog);
+          apiWatchdog = null;
+        }
+        if (!applyApiThread(list)) {
+          apiGiveUp();
+          return;
+        }
+        const n = list.filter((m) => m.role === 'user').length;
+        // 只在这种「本来要滚很久」的情况下提醒一次，别每次都弹
+        if (shownBefore < n - 6 && n >= 10) toast(`已直接读取整段对话（${n} 条提问），不用滚动加载`);
+      })
+      .catch(() => {
+        if (apiForHref !== location.href) return;
+        apiGiveUp();
+      });
+  }
+
+  // 快速通道还在路上：先别急着滚页面，等它一会儿（最多 8 秒）
+  function apiPending() {
+    if (!API_ADAPTERS[location.hostname]) return false;
+    if (apiState === 'ok') return false;
+    if (apiState === 'loading') return Date.now() - apiStartAt < 8000;
+    return apiState === 'idle';
+  }
+
+  // 对话里又冒出新消息（接口快照里还没有）：安静地再拉一次，最多几次
+  function scheduleApiRefetch() {
+    if (!apiThread || apiRefetchLeft <= 0 || apiState === 'loading') return;
+    apiRefetchLeft -= 1;
+    setTimeout(() => maybeApiLoad(true), 4000);
+  }
+
   /* ======================= 9. 扫描 ======================= */
   // 廉价签名：只数节点和文本长度（textContent 不触发排版）。
   // 没变就跳过后面整套「getBoundingClientRect 可见性测量 + 克隆清洗 + 排序渲染」，
@@ -1213,14 +1488,29 @@
       sweepResume = null;
       sweepNextAt = 0;
       daySepCache = { at: 0, seps: [] };
+      // 快速通道也要跟着换：上一段对话的数据不能留
+      apiThread = null;
+      apiState = 'idle';
+      apiRetryAt = 0;
+      apiRefetchLeft = 3;
+      if (apiWatchdog) {
+        clearTimeout(apiWatchdog);
+        apiWatchdog = null;
+      }
     }
     archiveHref = location.href;
+    // 刚进一个对话：先试试能不能直接读到整段（不滚动、不闪）
+    maybeApiLoad();
 
     // 稳定 key：优先用站点给的 turn/message 标识，没有就用文本指纹。
     // 虚拟列表会反复卸载重挂同一条消息，key 不稳就会重复/错位。
+    // 已经拿到整段对话时，优先复用接口那边的 key —— 这样页面滚到哪、
+    // 哪条被虚拟列表卸载，目录里的位置都不会变。
     const usedKeys = new Set();
+    const apiCands = apiCandidates();
     all.forEach((it) => {
-      const base = keyOfNode(it.el, it.role, it.text);
+      const apiKey = apiKeyOf(apiCands, it);
+      const base = apiKey || keyOfNode(it.el, it.role, it.text);
       let k = base;
       let n = 1;
       while (usedKeys.has(k)) {
@@ -1231,6 +1521,11 @@
       it.key = k;
       it.idx = indexOfNode(it.el);
     });
+    // 最新一条提问不在接口快照里 —— 多半是刚发出去的，安静地再拉一次
+    if (apiThread) {
+      const lastUser = all.length ? all.filter((x) => x.role === 'user').pop() : null;
+      if (lastUser && lastUser.key.indexOf('api:') !== 0) scheduleApiRefetch();
+    }
 
     // 时间线归属：页面上有日期分隔条就按它分组，没有就退回时间戳里的「月/日」
     const seps = daySeps();
@@ -1405,6 +1700,13 @@
   // 已渲染条目的高度加起来，远小于容器总高 → 剩下的都被虚拟列表卸载了。
   function maybeSweep() {
     if (sweeping || sweptOnce) return;
+    // 已经直接读到整段对话了，不需要再滚页面
+    if (apiThread) return;
+    // 快速通道还在路上就再等等，别先滚一遍白折腾
+    if (apiPending()) {
+      maybeApiLoad();
+      return;
+    }
     if (Date.now() < sweepBlockedUntil || Date.now() < sweepNextAt) return;
     if (document.hidden) return;
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
