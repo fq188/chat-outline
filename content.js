@@ -217,7 +217,10 @@
       .querySelectorAll(
         'button, svg, style, script, [aria-hidden="true"], .sr-only, ' +
           '[data-testid="copy-turn-action-button"], [data-testid="good-response-turn-action-button"], ' +
-          '[data-testid="bad-response-turn-action-button"], [data-testid="voice-play-turn-action-button"]'
+          '[data-testid="bad-response-turn-action-button"], [data-testid="voice-play-turn-action-button"], ' +
+          '[aria-label="用户附件"], [aria-label="Your attachment"], [aria-label="Attachments"], ' +
+          '[aria-label="附件"], [data-testid*="attachment"], [data-testid*="file-card"], ' +
+          '[class*="file-card"], [class*="attachment-card"]'
       )
       .forEach((n) => n.remove());
     let t = '';
@@ -231,7 +234,9 @@
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-      .replace(/^(You said|你说|您说)\s*[:：]\s*/i, '');
+      .replace(/^(You said|你说|您说)\s*[:：]?\s*/i, '')
+      .replace(/^(ChatGPT|GPT)\s*(说|said)\s*[:：]?\s*/i, '')
+      .replace(/^(You said|你说|您说)\s*[:：]?\s*/i, '');
   }
 
   // 纯图片 / 视频 / 附件消息没有文字，innerText 取不到东西。
@@ -1037,7 +1042,7 @@
   let apiState = 'idle'; // idle | loading | ok | failed
   let apiForHref = '';
   let apiRetryAt = 0;
-  let apiRefetchLeft = 3;
+  let apiRefetchLeft = 8;
   let apiStartAt = 0;
   let apiWatchdog = null; // 快速通道超时兜底：到点还没结果就直接交回滚动补扫
 
@@ -1170,7 +1175,7 @@
     apiThread = rows;
     apiIndexOf = new Map(rows.map((r, i) => [r.key, i]));
     apiState = 'ok';
-    apiRefetchLeft = 3;
+    apiRefetchLeft = 8;
     if (apiWatchdog) {
       clearTimeout(apiWatchdog);
       apiWatchdog = null;
@@ -1198,16 +1203,63 @@
   function apiCandidates() {
     if (!apiThread) return null;
     const map = new Map();
-    for (const it of apiThread) {
+    apiThread.forEach((it, idx) => {
       const full = normMatchFull(it.text);
       if (!map.has(it.role)) map.set(it.role, []);
-      map.get(it.role).push({ key: it.key, full, norm: full.slice(0, 60), taken: false });
-    }
+      map.get(it.role).push({ key: it.key, full, norm: full.slice(0, 60), taken: false, apiIdx: idx });
+    });
     // 游标：页面上的消息和接口列表都是「从上往下」的，配对也该按顺序往前走。
     // 原来每次都从列表开头贪心找，长对话里一堆提问开头一样（「帮我…」），
     // 页面上的第 20 问会被认到第 3 问头上 —— 点目录就跳到别人那儿去了。
     map.cursors = { user: 0, assistant: 0 };
+    // 同文本出现多次的（双胞胎提问）：第一趟配对要避开，见 pairTwins
+    map.dupFull = { user: new Set(), assistant: new Set() };
+    for (const role of ['user', 'assistant']) {
+      const seen = new Set();
+      for (const c of map.get(role) || []) {
+        if (!c.full) continue;
+        if (seen.has(c.full)) map.dupFull[role].add(c.full);
+        seen.add(c.full);
+      }
+    }
     return map;
+  }
+
+  // 双胞胎提问（一字不差的两条「详细求解」）第二趟配对：
+  // 第一趟已经把文本唯一的条目都配好了，双胞胎看「自己夹在谁和谁之间」对号 ——
+  // 上面最近的已配条目在接口里的位置是下界、下面是上界，只认区间内的候选。
+  // 没有这层，下面那条挂载时会把上面那条的 key 抢走，顺序校正跟着把条目挪走，
+  // 目录顺序就这么漂的（现场：点完第 15 问，第 8 问从目录里消失、第 9 问顶上来）。
+  function pairTwins(cands, all, twins, assignKey) {
+    for (const it of twins) {
+      const full = normMatchFull(it.text);
+      const list = (cands.get(it.role) || []).filter((c) => !c.taken && c.full === full);
+      if (!list.length) {
+        assignKey(it, null);
+        continue;
+      }
+      const pos = all.indexOf(it);
+      let lo = -1;
+      let hi = Infinity;
+      for (let i = pos - 1; i >= 0; i -= 1) {
+        const ai = all[i].key ? apiIndexOf.get(all[i].key) : null;
+        if (ai != null) {
+          lo = ai;
+          break;
+        }
+      }
+      for (let i = pos + 1; i < all.length; i += 1) {
+        const ai = all[i].key ? apiIndexOf.get(all[i].key) : null;
+        if (ai != null) {
+          hi = ai;
+          break;
+        }
+      }
+      const inRange = list.filter((c) => c.apiIdx > lo && c.apiIdx < hi);
+      const pick = inRange.length ? inRange[0] : list[0];
+      pick.taken = true;
+      assignKey(it, pick.key);
+    }
   }
 
   // 前缀匹配的下限：太短的文本（「帮我」「好的」）到处都能命中，只认完全一致
@@ -1552,7 +1604,7 @@
       apiIndexOf = new Map();
       apiState = 'idle';
       apiRetryAt = 0;
-      apiRefetchLeft = 3;
+      apiRefetchLeft = 8;
       if (apiWatchdog) {
         clearTimeout(apiWatchdog);
         apiWatchdog = null;
@@ -1568,8 +1620,7 @@
     // 哪条被虚拟列表卸载，目录里的位置都不会变。
     const usedKeys = new Set();
     const apiCands = apiCandidates();
-    all.forEach((it) => {
-      const apiKey = apiKeyOf(apiCands, it);
+    const assignKey = (it, apiKey) => {
       const base = apiKey || keyOfNode(it.el, it.role, it.text);
       let k = base;
       let n = 1;
@@ -1580,7 +1631,17 @@
       usedKeys.add(k);
       it.key = k;
       it.idx = indexOfNode(it.el);
+    };
+    // 第一趟只配文本唯一的；双胞胎（接口里同文本多条）留到第二趟按位置对号
+    const twinItems = [];
+    all.forEach((it) => {
+      if (apiCands && it.text && apiCands.dupFull[it.role] && apiCands.dupFull[it.role].has(normMatchFull(it.text))) {
+        twinItems.push(it);
+        return;
+      }
+      assignKey(it, apiKeyOf(apiCands, it));
     });
+    if (twinItems.length) pairTwins(apiCands, all, twinItems, assignKey);
     // 最新一条提问不在接口快照里 —— 多半是刚发出去的，安静地再拉一次
     if (apiThread) {
       const lastUser = all.length ? all.filter((x) => x.role === 'user').pop() : null;
@@ -1597,7 +1658,15 @@
       // 先看页面上有没有日期分隔条；那条缺失（还没渲染 / 被虚拟列表卸载）时，
       // 退一步用这条消息自己的 <time datetime>，不要整条留空
       const bySep = seps.length ? dayLabelFor(it.el, seps) : '';
-      it.day = apiDay || fmtDay(bySep || dayFromTime(it.time));
+      if (apiDay) {
+        it.day = apiDay;
+      } else if (apiThread) {
+        // 拿到接口快照后，没配对上的条目别信页面分隔条（虚拟列表会让它漂，
+        // 表现是「26日 39轮」一会儿变「12轮」），留空交给下面的日期继承
+        it.day = '';
+      } else {
+        it.day = fmtDay(bySep || dayFromTime(it.time));
+      }
     }
 
     // 并入档案：本轮看到的更新，没看到的保留（说明被虚拟列表卸载了）
@@ -1610,6 +1679,7 @@
         prev.text = it.text;
         if (it.time) prev.time = it.time;
         if (it.day) prev.day = it.day;
+        else if (apiThread && !prev.api) prev.day = ''; // 清掉旧的漂移值，交给日期继承
         prev.el = it.el;
         if (it.idx != null) prev.idx = it.idx;
         prev.ratio = ratioOf(it.el);
@@ -2599,9 +2669,69 @@
     if (scrollInList && cur) cur.scrollIntoView({ block: 'nearest' });
   }
 
+  // 在「眼下挂在页面上的消息」里按全文指纹找目标真身，不依赖配对给的 el。
+  // 配对会被双胞胎提问（一字不差的两条「详细求解」）和附件徽标文本搞混，
+  // 直接按「文本 + 第几次出现」找人：目标在完整目录里是第 N 条同文本提问，
+  // 页面上也取第 N 条同文本的挂载节点。
+  function findMountedByText(target, loose) {
+    if (!target) return null;
+    const full = normMatchFull(target.text || '');
+    const mounted = items.filter((o) => o.el && o.el.isConnected && o.role === target.role);
+    let pool;
+    if (full) {
+      pool = mounted.filter((o) => normMatchFull(o.text || '') === full);
+      if (!pool.length) {
+        const n = full.slice(0, 60);
+        if (n.length >= FUZZY_MIN) {
+          pool = mounted.filter((o) => fuzzyHit(n, normMatch(o.text || '')));
+        }
+      }
+    } else {
+      // 纯图片/附件消息没有文本：两边都是空串，按出现次数对
+      pool = mounted.filter((o) => !normMatchFull(o.text || ''));
+    }
+    if (!pool.length) return null;
+    // 双胞胎提问（一字不差的两条「详细求解」）：单看文本分不清谁是谁。
+    // 候选有接口序号就拿序号对，对不上说明挂着的是「另一个」，不算找到 ——
+    // 否则点第 45 问会亮在第 49 问上（它们文本一模一样）。
+    // loose 模式（滚动细找时）跳过这层拒绝：探针已经把页面滚到目标附近了，
+    // 挂在这条位置上的双胞胎就是目标本人 —— 由调用方保证「只在猜测位置附近认」
+    const tAi = apiIndexOf.get(target.key);
+    if (tAi != null && !loose) {
+      const withIdx = pool
+        .map((o) => ({ o, ai: apiIndexOf.get(o.key) }))
+        .filter((x) => x.ai != null);
+      if (withIdx.length) {
+        const exact = withIdx.filter((x) => x.ai === tAi);
+        return exact.length ? exact[0].o : null;
+      }
+    }
+    if (pool.length === 1) return pool[0];
+    // 没有接口序号可用时退回「第几次出现」：目标在完整目录里是第 N 条同文本，
+    // 页面上也取第 N 条同文本的挂载节点
+    let ord = 0;
+    for (const o of items) {
+      if (o === target) break;
+      if (o.role === target.role && normMatchFull(o.text || '') === full) ord += 1;
+    }
+    return pool[Math.min(ord, pool.length - 1)];
+  }
+
   function jumpTo(key) {
     const it = archive.get(key) || items.find((i) => i.key === key);
     if (!it) return;
+    // 拿到接口快照时，不信任配对给的 el（可能认错了双胞胎）：
+    // 按「文本 + 第几次出现」在挂载节点里找真身，找不到再滚动去找
+    if (apiThread) {
+      const hit = findMountedByText(it);
+      if (hit) {
+        it.el = hit.el;
+        doJump(it);
+        return;
+      }
+      seekTo(it);
+      return;
+    }
     if (it.el && it.el.isConnected) {
       doJump(it);
       return;
@@ -2631,7 +2761,15 @@
     setTimeout(() => {
       if (token !== jumpSeq || activeKey !== key) return;
       const cur = archive.get(key);
-      const now = (cur && cur.el && cur.el.isConnected && cur.el) || (el && el.isConnected ? el : null);
+      let now = (cur && cur.el && cur.el.isConnected && cur.el) || (el && el.isConnected ? el : null);
+      // 虚拟列表可能刚把这条卸载重挂过，按文本再找一次真身
+      if (cur && apiThread) {
+        const hit = findMountedByText(cur);
+        if (hit) {
+          cur.el = hit.el;
+          now = hit.el;
+        }
+      }
       if (!now) return;
       const r = now.getBoundingClientRect();
       const mid = window.innerHeight / 2;
@@ -2710,19 +2848,44 @@
     suppressSpyUntil = Date.now() + 2500;
 
     const maxTop = () => Math.max(0, sc.scrollHeight - sc.clientHeight);
+    let guessY = 0;
+    let localRadius = 0;
     const probe = async (y) => {
       sc.scrollTop = Math.max(0, Math.min(maxTop(), y));
       await raf();
       await sleep(85);
       scan(true, true);
-      const cur = archive.get(it.key);
-      return cur && cur.el && cur.el.isConnected ? cur : null;
+      // 不查「配对把 el 给了谁」，按文本在挂载节点里找真身；
+      // 找到就把 el 纠正过来，后面的 doJump 和落定校准都用它
+      if (!apiThread) {
+        const cur = archive.get(it.key);
+        if (cur && cur.el && cur.el.isConnected) return cur;
+        return null;
+      }
+      const hit = findMountedByText(it);
+      if (hit && hit.el && hit.el.isConnected) {
+        it.el = hit.el;
+        return it;
+      }
+      // 严格匹配没认（双胞胎挂的是另一个 / 配对还没跟上）：
+      // 只在「猜测位置附近」放宽 —— 探针已经把人滚到目标家门口了，
+      // 这条位置上的同文本消息就是目标；远处粗扫时不能放宽，不然会认错双胞胎
+      if (Math.abs(y - guessY) <= localRadius) {
+        const near = findMountedByText(it, true);
+        if (near && near.el && near.el.isConnected) {
+          it.el = near.el;
+          return it;
+        }
+      }
+      return null;
     };
 
     try {
       const view = sc.clientHeight || 400;
       const step = Math.max(120, Math.floor(view * 0.6));
       const guess = seekGuess(sc, it);
+      guessY = guess;
+      localRadius = step * 4.5; // 局部细找的范围（先试 ±4 屏），超出就不放宽
 
       // 先试猜出来的位置，再在附近细找（±4 屏）
       const first = await probe(guess);

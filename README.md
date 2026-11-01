@@ -133,6 +133,21 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.5.2 — 适配新版 ChatGPT UI / New ChatGPT UI support
+
+ChatGPT 前端改版后，每条消息前面多了看得见的「你说：」「ChatGPT 说：」标签，带附件的提问还会把附件卡片（文件名 + PDF 徽标）混进消息文本 —— 页面上的「HW_07.pdfPDFLec 16…pdfPDF详细求解」和接口给的干净文本「详细求解」对不上，目录里同一问出现两次、日期分组来回漂、点旧条目跳不到地方。另外真实对话里确实存在一字不差的重复提问（两条「详细求解」），单靠文本永远分不清谁是谁。
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| **附件卡片不再混进提问文本**：清洗时移除附件/文件卡片节点，附件提问在目录里显示为干净的「详细求解」，和接口对得上，不再出现重复条目 | **Attachment cards no longer leak into question text**: file-card nodes are stripped during cleanup, so an attachment question shows up as its clean text, matches the API row, and stops duplicating entries |
+| **「你说：」「ChatGPT 说：」标签剥掉**：新 UI 的可见角色标签不再污染目录文本与配对指纹 | **Visible role labels stripped**: the new UI's "You said:" / "ChatGPT said:" labels no longer pollute outline text or matching fingerprints |
+| **跳转改成按「文本 + 第几次出现」找真身**：不再盲信配对给的元素；重复提问用接口序号消歧，挂着的是「另一个双胞胎」时不算找到，滚动细找只在猜测位置附近放宽 | **Jumps now locate the real node by text + ordinal**: pairing-supplied elements are no longer trusted blindly; duplicate questions are disambiguated by API index, a mounted "other twin" never counts as found, and the relaxed match only applies near the estimated position |
+| **双胞胎配对按位置对号**：同文本多条的提问先跳过，等唯一文本都配好后，按「夹在谁和谁之间」分配 —— 修掉目录顺序/计数漂移（点完后面的重复提问，前面的从目录里消失） | **Twin pairing by position**: duplicated texts are paired last, assigned by which paired neighbours they sit between — fixes outline order/count drift (clicking the later twin used to make the earlier one vanish) |
+| **日期分组稳定**：拿到接口快照后，没配对上的条目不再信页面上会漂的日期分隔条，交给日期继承 | **Stable day grouping**: with an API snapshot, unpaired rows no longer trust the page's drifting date separators and inherit from neighbours instead |
+| **新提问补拉次数 3 → 8**：刚发的提问更快进目录 | **More refetches for fresh questions**: newly sent questions land in the outline sooner |
+
 ### v1.5.1 — 点哪条就跳哪条 / Jump lands where you clicked
 
 v1.5.0 加了「一次请求拿全目录」，但配对方式有个坑：接口条目和页面上那条消息靠**「前 60 个字一样」**来认。真实对话里经常连续追问同一个主题，十几条提问的前 60 字一模一样 —— 于是页面上的第 16 问被认成了第 1 问，点目录就跳到别人那儿去；找不到时就从头一屏一屏往下扫，看着像页面在「一直跳」。
@@ -410,6 +425,7 @@ node test-v140.js   # 目录结构一致性（散条目 / 假日期 / 自动折�
 node test-v132.js   # 新提问必须落在目录末尾（追加 / 切分支 / 编号复用）
 node test-v150.js   # 快速通道：一次请求拿全目录，接口失败要退回滚动补扫
 node test-v151.js   # 点目录要跳到「那一条」：开头雷同的 20 轮追问，逐一核对落点
+node test-v152.js   # 新版 ChatGPT UI：附件卡片/「你说：」标签清洗 + 一字不差的双胞胎提问消歧
 node e2e-real.js    # 用 --load-extension 加载整份扩展，在仿真 ChatGPT 页上跑一遍
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```
