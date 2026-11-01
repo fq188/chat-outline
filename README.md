@@ -133,6 +133,21 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.5.4 — 时间轴回来了，进入对话不再滚动加载 / Timeline is back, no more scroll-loading on entry
+
+v1.5.2 的日期规则写得太绝对：拿到接口快照后，凡是没配对上的条目一律把日期清空、等前面的条目继承。可只要配对整体没成（新版 UI 的附件名、Markdown 渲染差异都会让全文指纹对不上），整份目录就一条日期都没有 ——「时间轴消失」就是这么来的。同时补扫（滚动加载）的定时器在接口数据到了之后照常触发，进页面还是会滚一趟。
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| **接口数据到了强制重绘**：应用快照后无条件 `render()` 一次；收尾（日期归属 / 顺序校正 / 编号）出错也不影响重绘，面板不会停在「只扫到视口那几条」的旧状态 | **Always repaint once the snapshot lands**: a forced `render()` after applying it, and a guard so a failure in day/order bookkeeping can never leave the panel stuck on the visible slice |
+| **补扫彻底让路**：接口成功时一并清掉已排队的补扫定时器；`sweep()` 入口和滚动循环里都检查「已有整段对话 / 还在路上」，命中就直接收手（之前那个定时器会照常跑，还把中止标记重置回 false） | **Scroll-loading now really backs off**: queued sweep timers are cleared when the snapshot arrives, and both `sweep()` and its scroll loop bail out as soon as the full thread is available or in flight |
+| **日期兜底**：只有在真的拿到接口日期时才用「留空等继承」；一份都没有时退回页面日期，绝不再出现「整份目录没有任何日期」 | **Day fallback fixed**: "leave blank and inherit" only applies when the snapshot actually carries dates; otherwise page-derived days are used, so the timeline can't vanish entirely |
+| **读取中明确提示**：还在读整段对话时工具条显示「正在读取整段对话…」，不再让人以为目录只有几条 | **Visible progress**: the toolbar shows "正在读取整段对话…" while the snapshot is loading |
+| **超时放宽到 12 秒**：真实站点读长对话有时要 10 秒，别误判成失败去滚页面 | **Watchdog raised to 12s**: long threads can take ~10s, so a premature give-up no longer triggers scroll-loading |
+| **提问以接口文本为准**：目录里显示接口给的干净文本，不再被页面里的附件名（`HW_07.pdfPDF…`）污染 | **Questions use the API text**: clean source text instead of the page's attachment-laden string |
+
 ### v1.5.3 — 点「答」不再满页乱跳 / No more wild scrolling when you click an answer
 
 v1.5.2 把所有条目的跳转都改成「按文本指纹找真身」，但**回答是 Markdown 渲染的**：接口给的是 `## 结论`、`**加粗**`、代码块、公式原文，页面里是渲染后的纯文本，两边指纹永远不相等。于是点「答」条目时严格匹配失败，退化成整页探测滚动 —— 看起来就是「来回跳、一闪一闪」。副作用是每条回答都多出一个对不上的 DOM 条目，目录里的「答」翻倍。
@@ -439,6 +454,7 @@ node test-v150.js   # 快速通道：一次请求拿全目录，接口失败要�
 node test-v151.js   # 点目录要跳到「那一条」：开头雷同的 20 轮追问，逐一核对落点
 node test-v152.js   # 新版 ChatGPT UI：附件卡片/「你说：」标签清洗 + 一字不差的双胞胎提问消歧
 node test-v153.js   # 点「答」条目：Markdown 渲染差异不能让页面满页乱滚/反复闪
+node test-v154.js   # 进入对话：全量目录 + 时间轴 + 页面不滚（接口慢 1.5 秒也要一步到位）
 node e2e-real.js    # 用 --load-extension 加载整份扩展，在仿真 ChatGPT 页上跑一遍
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```

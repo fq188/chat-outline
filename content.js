@@ -1182,10 +1182,36 @@
     }
     sweptOnce = true; // 已经是全量，不用再滚
     sweepAbort = true; // 正在滚的那趟也别滚了
+    if (sweepTimer) {
+      clearTimeout(sweepTimer);
+      sweepTimer = null;
+    }
     sweepResume = null;
     lastSignature = '';
     lastCheapSig = '';
-    scan(true, false);
+    try {
+      scan(true, false);
+    } catch (err) {
+      // 扫描收尾万一出错，也不能让面板停在「只有页面上那几条」的旧样子
+      try {
+        console.error('[chat-outline] scan after api failed', err);
+      } catch (e) {
+        /* ignore */
+      }
+      items = order.map((k) => archive.get(k)).filter(Boolean);
+      try {
+        render();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    // 硬保证：接口数据到了就必须重绘（页面是虚拟列表，只挂着视口附近那几条，
+    // 曾经出现过「内存里 160 条、面板还停在 20 条」，用户看到的还是没有时间轴的小列表）
+    try {
+      render();
+    } catch (e) {
+      /* ignore */
+    }
     return true;
   }
 
@@ -1403,7 +1429,7 @@
       if (apiForHref !== location.href || apiThread) return;
       if (apiState !== 'loading') return;
       apiGiveUp();
-    }, 8000);
+    }, 12000);
     Promise.resolve()
       .then(ad)
       .then((list) => {
@@ -1694,7 +1720,12 @@
     // 时间线归属：页面上有日期分隔条就按它分组，没有就退回时间戳里的「月/日」。
     // 已经拿到接口那条（api:true）时以接口的 create_time 为准 —— 两个来源说法不一样
     // （页面是「今天」、接口是「10月24日」）会把同一天劈成两组，必须只用一套说法。
+    let sig = '';
+    try {
     const seps = daySeps();
+    // 接口快照里到底有没有日期：一条都没有（create_time 缺失）时就不能「留空等继承」，
+    // 否则整份目录一条日期都没有 —— 时间轴整个消失
+    const apiHasDay = apiThread ? apiThread.some((r) => !!r.day) : false;
     for (const it of all) {
       const prevApi = archive.get(it.key);
       const apiDay = prevApi && prevApi.api && prevApi.day ? prevApi.day : '';
@@ -1703,7 +1734,7 @@
       const bySep = seps.length ? dayLabelFor(it.el, seps) : '';
       if (apiDay) {
         it.day = apiDay;
-      } else if (apiThread) {
+      } else if (apiThread && apiHasDay) {
         // 拿到接口快照后，没配对上的条目别信页面分隔条（虚拟列表会让它漂，
         // 表现是「26日 39轮」一会儿变「12轮」），留空交给下面的日期继承
         it.day = '';
@@ -1718,8 +1749,13 @@
     for (const it of all) {
       const prev = archive.get(it.key);
       if (prev) {
-        prev.raw = it.raw;
-        prev.text = it.text;
+        // 提问以接口给的干净文本为准：页面文本会混进附件名
+        // （「HW_07.pdfPDFLec 16…pdfPDF详细求解」），目录里显示它既难看又搜不到；
+        // 回答是流式的，接口快照可能还是旧的，仍用页面文本
+        if (!(prev.api && it.role === 'user')) {
+          prev.raw = it.raw;
+          prev.text = it.text;
+        }
         if (it.time) prev.time = it.time;
         if (it.day) prev.day = it.day;
         else if (apiThread && !prev.api) prev.day = ''; // 清掉旧的漂移值，交给日期继承
@@ -1781,16 +1817,27 @@
 
     // 签名里只在「答」打开时纳入回答长度 —— 这样流式回答时列表能跟着更新；
     // 没开「答」时不纳入，避免回答增长引起无谓的列表重建
-    const sig = items
+    sig = items
       .map(
         (i) =>
           i.key +
           '|' +
           (i.day || '') +
           '|' +
-          (i.role === 'user' ? i.text.slice(0, 40) : showAssistant ? i.raw.length : '')
+          (i.role === 'user' ? String(i.text || '').slice(0, 40) : showAssistant ? String(i.raw || '').length : '')
       )
       .join('~');
+    } catch (err) {
+      // 收尾这一段出错（日期归属 / 顺序校正 / 编号）不该让整个面板不刷新：
+      // 记下来，退回「按 order 直接取条目」，照常渲染
+      try {
+        console.error('[chat-outline] scan tail failed', err);
+      } catch (e) {
+        /* ignore */
+      }
+      if (order.length) items = order.map((k) => archive.get(k)).filter(Boolean);
+    }
+
 
     app.dataset.has = items.some((i) => i.role === 'user') ? '1' : '0';
 
@@ -2064,7 +2111,7 @@
           sig = mountedSig();
         }
         prevSig = sig;
-        if (sweepAbort) break;
+        if (sweepAbort || apiThread) break; // 接口数据到了就立刻收手，别再滚
         const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
         if (y >= maxTop) {
           reachedEnd = true;
@@ -2073,7 +2120,7 @@
         if (Date.now() - t0 > maxMs) break;
         y = Math.min(maxTop, y + step);
       }
-      if (!sweepAbort) {
+      if (!sweepAbort && !apiThread) {
         sc.scrollTop = sc.scrollHeight;
         seenPos.add(Math.round(sc.scrollTop));
         await settleQuiet(600);
@@ -2139,6 +2186,12 @@
 
   async function sweep() {
     if (sweeping) return;
+    // 快速通道已经拿到整段对话 / 还在路上：这趟根本不用滚
+    if (apiThread) return;
+    if (apiPending()) {
+      maybeApiLoad();
+      return;
+    }
     const anyEl = (items.find((i) => i.el && i.el.isConnected) || {}).el;
     if (!anyEl) return;
 
@@ -2651,7 +2704,14 @@
     $list.innerHTML = html;
     $list.scrollTop = keepBottom ? $list.scrollHeight : keepScroll;
     lastGroups = groups;
-    updateFoldBar(groups);
+    // 整段对话还在路上：明确说一声，避免把「只扫到视口那几条」当成最终结果
+    if (apiState === 'loading' && !apiThread && !query && !groups.some((g) => g.label)) {
+      $gbar.hidden = false;
+      $gsum.textContent = '正在读取整段对话…';
+      $btnFoldAll.hidden = true;
+    } else {
+      updateFoldBar(groups);
+    }
   }
 
   /* ======================= 11. 跳转 ======================= */
