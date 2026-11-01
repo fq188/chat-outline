@@ -133,6 +133,22 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.5.1 — 点哪条就跳哪条 / Jump lands where you clicked
+
+v1.5.0 加了「一次请求拿全目录」，但配对方式有个坑：接口条目和页面上那条消息靠**「前 60 个字一样」**来认。真实对话里经常连续追问同一个主题，十几条提问的前 60 字一模一样 —— 于是页面上的第 16 问被认成了第 1 问，点目录就跳到别人那儿去；找不到时就从头一屏一屏往下扫，看着像页面在「一直跳」。
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| **配对改用完整文本**：不再截断到 60 字，全文一致才算同一条。开头雷同的追问不会再互相顶替 | **Pairing now compares full text** instead of the first 60 characters, so near-identical follow-up questions can no longer stand in for each other |
+| **配对改成单向前进**：页面和接口都是从上往下的，配对也顺着游标往前走。原来每次都从接口列表开头贪心找，长对话里必然认到很早的那一条 | **Pairing walks forward monotonically**: both the page and the API payload are top-to-bottom, so the cursor advances with them. The old code restarted from the head of the API list on every scan, which on a long thread always matched a much earlier message |
+| **前缀匹配加了长度下限**：短文本（「帮我」「好的」）必须完全一致才算命中，否则一段通用开头能匹配到任何地方 | **A minimum length for prefix matching**: short strings like "help me" must match exactly, otherwise a generic opening matches everywhere |
+| **跳转位置改用「邻居外推」**：挑一个页面上真的挂着的条目当锚点，按相隔几条消息线性外推，而不是「第几条 ÷ 总条数 × 页面总高」。猜得准，需要试探的次数就少 | **Jump position is interpolated from a mounted neighbour** rather than "index ÷ total × scrollHeight". A better guess means far fewer probe scrolls |
+| **找不到时向两侧扩大**，不再从顶部重新扫一遍 —— 原来长对话能看到页面连跳十几下（实测 17 次 → 2 次） | **Searching outward from the guess** instead of restarting at the top — the old path visibly scrolled a long thread 17 times; it now takes 2 |
+| **落定后校准一次**：平滑滚动是「动画开始时记住元素位置」的，虚拟列表在这 0.6 秒里把目标卸载重挂，动画就会停在别的消息上。现在滚动结束会再对一次位置 | **Re-centre after landing**: smooth scrolling captures the element's position when the animation starts, so if the virtual list unmounts and remounts the target mid-flight the animation stops somewhere else. The position is now verified once the scroll settles |
+| **修掉一个真实崩溃**：滚动跟随时直接读 `it.el.isConnected`，而接口来的条目在页面上可能根本没挂载（`el` 为 `null`）→ 抛 `Cannot read properties of null`，滚动跟随当场中断 | **Fixed a real crash**: scroll-spy read `it.el.isConnected` directly, but API-only rows may not be mounted at all (`el === null`) → `Cannot read properties of null`, which killed scroll-spy |
+
 ### v1.5.0 — 目录不用靠滚动加载了 / No more scroll-to-load
 
 长对话里目录一直长不全，是因为 ChatGPT 只把视口附近那几条消息挂在页面上（虚拟列表），滚远了就卸载。以前只能靠「自动上下滚动一遍」把消息逼出来，几十条对话要滚十几趟、十几秒，屏幕还跟着跳。
@@ -393,6 +409,8 @@ node test-v130.js   # 时间线分组、回答缩进、折叠
 node test-v140.js   # 目录结构一致性（散条目 / 假日期 / 自动折叠）
 node test-v132.js   # 新提问必须落在目录末尾（追加 / 切分支 / 编号复用）
 node test-v150.js   # 快速通道：一次请求拿全目录，接口失败要退回滚动补扫
+node test-v151.js   # 点目录要跳到「那一条」：开头雷同的 20 轮追问，逐一核对落点
+node e2e-real.js    # 用 --load-extension 加载整份扩展，在仿真 ChatGPT 页上跑一遍
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```
 

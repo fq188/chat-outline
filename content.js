@@ -1,5 +1,5 @@
 /* =========================================================================
- * 对话目录 · Chat Outline  (v1.5.0)
+ * 对话目录 · Chat Outline  (v1.5.1)
  * 为 AI 对话网页生成悬浮目录：
  *   - 列出全部「用户提问」（可切换显示 AI 回答）
  *   - 点击跳转到对应消息并高亮
@@ -418,7 +418,7 @@
     if (!el || !seps.length) return '';
     for (let i = seps.length - 1; i >= 0; i -= 1) {
       const s = seps[i];
-      if (!s.el.isConnected) continue;
+      if (!s.el || !s.el.isConnected) continue;
       let pos = 0;
       try {
         pos = s.el.compareDocumentPosition(el);
@@ -1033,6 +1033,7 @@
   // 读不到（没登录 / 接口变了 / 不是这个站点）就安静地退回滚动补扫，
   // 功能一点不受影响，只是慢回原来的样子。
   let apiThread = null; // 全量条目（按对话顺序），null = 没拿到
+  let apiIndexOf = new Map(); // key → 在 apiThread 里的下标（跳转估位置用）
   let apiState = 'idle'; // idle | loading | ok | failed
   let apiForHref = '';
   let apiRetryAt = 0;
@@ -1156,6 +1157,7 @@
         time: clockOf(m.ts),
         day: dayOfTs(m.ts),
         ratio: list.length > 1 ? i / (list.length - 1) : 0,
+        apiIdx: i,
         el: null,
         gone: false,
         api: true
@@ -1166,6 +1168,7 @@
     for (const it of rows) archive.set(it.key, it);
     order = rows.map((i) => i.key);
     apiThread = rows;
+    apiIndexOf = new Map(rows.map((r, i) => [r.key, i]));
     apiState = 'ok';
     apiRefetchLeft = 3;
     if (apiWatchdog) {
@@ -1183,40 +1186,96 @@
 
   // 配对用的文本指纹：去掉「[图片 ×6]」这类方括号标注和所有空白 ——
   // 接口给的图片消息和页面渲染出来的写法不一样，但去掉之后就都一样了
-  function normMatch(t) {
+  function normMatchFull(t) {
     return String(t || '')
       .replace(/\[[^\]]*\]/g, '')
-      .replace(/[\s\u200b]+/g, '')
-      .slice(0, 60);
+      .replace(/[\s\u200b]+/g, '');
+  }
+  function normMatch(t) {
+    return normMatchFull(t).slice(0, 60);
   }
 
   function apiCandidates() {
     if (!apiThread) return null;
     const map = new Map();
     for (const it of apiThread) {
+      const full = normMatchFull(it.text);
       if (!map.has(it.role)) map.set(it.role, []);
-      map.get(it.role).push({ key: it.key, norm: normMatch(it.text), taken: false });
+      map.get(it.role).push({ key: it.key, full, norm: full.slice(0, 60), taken: false });
     }
+    // 游标：页面上的消息和接口列表都是「从上往下」的，配对也该按顺序往前走。
+    // 原来每次都从列表开头贪心找，长对话里一堆提问开头一样（「帮我…」），
+    // 页面上的第 20 问会被认到第 3 问头上 —— 点目录就跳到别人那儿去了。
+    map.cursors = { user: 0, assistant: 0 };
     return map;
   }
 
-  // 页面上这条消息对应 API 里的哪一条：按角色 + 文本前缀配对，一对一消耗。
-  // 图片消息两边去括号后都是空串，就按出现顺序一一对上。
+  // 前缀匹配的下限：太短的文本（「帮我」「好的」）到处都能命中，只认完全一致
+  const FUZZY_MIN = 24;
+
+  function fuzzyHit(n, cnorm) {
+    if (!n || !cnorm) return false;
+    if (n === cnorm) return true;
+    // 流式生成时页面上的文字是接口那条的前缀，所以两个方向都认；
+    // 但那个「短的一边」必须够长，否则就是碰巧同开头
+    if (cnorm.indexOf(n) === 0 && n.length >= FUZZY_MIN) return true;
+    if (n.indexOf(cnorm) === 0 && cnorm.length >= FUZZY_MIN) return true;
+    return false;
+  }
+
+  // 页面上这条消息对应 API 里的哪一条。
+  //   ① 全文一致（比对完整文本，不受截断影响）—— 与顺序无关，最稳
+  //   ② 从游标往后做前缀匹配 —— 流式生成时页面文字只是接口那条的前缀
+  //   ③ 从游标往回退一小段
+  //   ④ 图片消息：两边去掉方括号后都是空串，按顺序对上
   function apiKeyOf(cands, it) {
     if (!cands) return null;
     const list = cands.get(it.role);
-    if (!list) return null;
-    const n = normMatch(it.text);
-    for (const c of list) {
+    if (!list || !list.length) return null;
+    const full = normMatchFull(it.text);
+    const n = full.slice(0, 60);
+
+    // ① 全文一致：拿完整文本比，不看前 60 字，长篇里开头雷同也不会认错
+    if (full) {
+      for (const c of list) {
+        if (c.taken || !c.full) continue;
+        if (c.full === full) {
+          c.taken = true;
+          return c.key;
+        }
+      }
+    }
+
+    const cur = cands.cursors[it.role] || 0;
+
+    // ② 往后
+    for (let i = cur; i < list.length; i += 1) {
+      const c = list[i];
       if (c.taken) continue;
-      if (!n && !c.norm) {
+      if (fuzzyHit(n, c.norm)) {
+        c.taken = true;
+        cands.cursors[it.role] = i + 1;
+        return c.key;
+      }
+    }
+
+    // ③ 往回退一小段：流式重渲染会让某一条短暂抖到游标前面
+    for (let i = Math.max(0, cur - 8); i < cur; i += 1) {
+      const c = list[i];
+      if (c.taken) continue;
+      if (fuzzyHit(n, c.norm)) {
         c.taken = true;
         return c.key;
       }
-      if (!n || !c.norm) continue;
-      // 回答在流式生成时，页面上的文字是接口那条的前缀，所以两个方向都要认
-      if (n === c.norm || c.norm.indexOf(n) === 0 || n.indexOf(c.norm) === 0) {
+    }
+
+    // ④ 图片消息
+    if (!n) {
+      for (let i = cur; i < list.length; i += 1) {
+        const c = list[i];
+        if (c.taken || c.norm) continue;
         c.taken = true;
+        cands.cursors[it.role] = i + 1;
         return c.key;
       }
     }
@@ -1490,6 +1549,7 @@
       daySepCache = { at: 0, seps: [] };
       // 快速通道也要跟着换：上一段对话的数据不能留
       apiThread = null;
+      apiIndexOf = new Map();
       apiState = 'idle';
       apiRetryAt = 0;
       apiRefetchLeft = 3;
@@ -2549,6 +2609,8 @@
     seekTo(it);
   }
 
+  let jumpSeq = 0;
+
   function doJump(it) {
     if (!it || !it.el || !it.el.isConnected) return;
     suppressSpyUntil = Date.now() + 1000;
@@ -2559,6 +2621,30 @@
     }
     flash(it.el);
     setActive(it.key, true);
+
+    // 平滑滚动是「在动画开始时记住元素位置」的：虚拟列表在这 0.6 秒里把这条
+    // 卸载重挂一次，动画就会停在别的消息上（点了 A 停在 B）。
+    // 落定后再校一次位置，只校准「还差得多」的情况，不跟用户的手抢。
+    const token = (jumpSeq += 1);
+    const key = it.key;
+    const el = it.el;
+    setTimeout(() => {
+      if (token !== jumpSeq || activeKey !== key) return;
+      const cur = archive.get(key);
+      const now = (cur && cur.el && cur.el.isConnected && cur.el) || (el && el.isConnected ? el : null);
+      if (!now) return;
+      const r = now.getBoundingClientRect();
+      const mid = window.innerHeight / 2;
+      if (Math.abs(r.top + r.height / 2 - mid) > window.innerHeight / 3) {
+        try {
+          now.scrollIntoView({ behavior: 'auto', block: 'center' });
+        } catch (e) {
+          /* ignore */
+        }
+        flash(now);
+        setActive(key, true);
+      }
+    }, 620);
   }
 
   // 目标被虚拟列表卸载了：先按记下的相对位置猜一屏，猜不中就在附近细搜，
@@ -2580,6 +2666,44 @@
     }
   }
 
+  // 猜「目标大概在滚动容器的哪个位置」。
+  // 拿「第几条 / 总条数 × 总高」去猜很不准：每条消息高度差得多，长回答能顶几十行。
+  // 改成挑一个「页面上真的挂着」的接口条目当锚点，按相隔几条消息线性外推 ——
+  // 猜得越准，需要反复试探的次数越少，用户也就看不到「一直跳」。
+  function seekGuess(sc, it) {
+    const view = sc.clientHeight || 400;
+    const maxTop = Math.max(0, sc.scrollHeight - sc.clientHeight);
+    const clamp = (v) => Math.max(0, Math.min(maxTop, Math.round(v)));
+    const ti = apiIndexOf.get(it.key);
+    if (ti != null && apiThread && apiThread.length > 1) {
+      let best = null;
+      let srect = null;
+      try {
+        srect = sc.getBoundingClientRect();
+      } catch (e) {
+        srect = null;
+      }
+      if (srect) {
+        for (const o of items) {
+          if (!o.el || !o.el.isConnected) continue;
+          const ai = apiIndexOf.get(o.key);
+          if (ai == null) continue;
+          const r = o.el.getBoundingClientRect();
+          if (r.height <= 0) continue;
+          const top = r.top - srect.top + (sc.scrollTop || 0);
+          const d = Math.abs(ai - ti);
+          if (!best || d < best.d) best = { d, ai, top };
+        }
+      }
+      if (best) {
+        // 平均每条消息占多高（含日期分隔条等），用来外推相隔的那几条
+        const per = sc.scrollHeight / apiThread.length;
+        return clamp(best.top + (ti - best.ai) * per - view * 0.35);
+      }
+    }
+    return clamp((it.ratio || 0) * sc.scrollHeight - view * 0.4);
+  }
+
   async function seekIn(sc, it) {
     const prevBehavior = sc.style.scrollBehavior;
     sc.style.scrollBehavior = 'auto';
@@ -2598,12 +2722,17 @@
     try {
       const view = sc.clientHeight || 400;
       const step = Math.max(120, Math.floor(view * 0.6));
-      let guess = Math.round((it.ratio || 0) * sc.scrollHeight - view * 0.4);
-      guess = Math.max(0, Math.min(maxTop(), guess));
+      const guess = seekGuess(sc, it);
 
-      for (let d = 0; d <= 4; d += 1) {
-        const offs = d === 0 ? [0] : [-d * step, d * step];
-        for (const off of offs) {
+      // 先试猜出来的位置，再在附近细找（±4 屏）
+      const first = await probe(guess);
+      if (first) {
+        sc.style.scrollBehavior = prevBehavior;
+        doJump(first);
+        return true;
+      }
+      for (let d = 1; d <= 4; d += 1) {
+        for (const off of [-d * step, d * step]) {
           const hit = await probe(guess + off);
           if (hit) {
             sc.style.scrollBehavior = prevBehavior;
@@ -2613,15 +2742,24 @@
         }
       }
 
-      // 长对话兜底：从头扫一遍（每屏一次）
+      // 还没找到：从猜的位置**向两侧交替**扩大，别从头开始扫。
+      // 原来是从 y=0 一屏一屏往下扫，长对话能看到页面连跳十几下 —— 这才是「一直跳」的来源。
       const total = maxTop();
-      for (let y = 0; y <= total; y += step) {
-        const hit = await probe(y);
-        if (hit) {
-          sc.style.scrollBehavior = prevBehavior;
-          doJump(hit);
-          return true;
+      let up = guess - 5 * step;
+      let down = guess + 5 * step;
+      for (let n = 0; n < 40; n += 1) {
+        if (up < 0 && down > total) break;
+        for (const y of [down, up]) {
+          if (y < 0 || y > total) continue;
+          const hit = await probe(y);
+          if (hit) {
+            sc.style.scrollBehavior = prevBehavior;
+            doJump(hit);
+            return true;
+          }
         }
+        up -= step;
+        down += step;
       }
       return false;
     } catch (e) {
@@ -2638,7 +2776,8 @@
     const line = window.innerHeight * 0.35;
     let best = null;
     for (const it of list) {
-      if (!it.el.isConnected) continue;
+      // 接口来的条目页面上可能根本没挂（虚拟列表），el 是 null，别在这里炸
+      if (!it.el || !it.el.isConnected) continue;
       const r = it.el.getBoundingClientRect();
       if (r.top <= line) best = it;
       else break;
