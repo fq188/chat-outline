@@ -98,6 +98,7 @@
             var art = document.createElement('article');
             art.setAttribute('data-testid', 'conversation-turn-' + i);
             art.setAttribute('data-q', String(Math.floor(i / 2)));
+            art.setAttribute('data-role', m.role);
             art.style.top = i * H + 'px';
             art.style.height = H - 12 + 'px';
             var div = document.createElement('div');

@@ -1225,6 +1225,40 @@
     return map;
   }
 
+  // 第三趟：文本对不上、但位置说得清 —— 按「夹在谁和谁之间」补配。
+  // 回答是 Markdown 渲染的，接口给的是原文（`## 标题`、`**加粗**`、代码块、公式），
+  // 两边全文指纹永远不等；可选位置是唯一的：两条已配好的消息之间，
+  // 同一角色只剩一个候选，那就是它。不补这一趟，每条回答都会多出一个
+  // 「DOM 条目」和接口条目并排出现在目录里，点它还找不到人（满页乱滚）。
+  function fillByPosition(cands, all, missed, assignKey) {
+    for (const it of missed) {
+      const pos = all.indexOf(it);
+      let lo = -1;
+      let hi = Infinity;
+      for (let i = pos - 1; i >= 0; i -= 1) {
+        const ai = all[i].key ? apiIndexOf.get(all[i].key) : null;
+        if (ai != null) {
+          lo = ai;
+          break;
+        }
+      }
+      for (let i = pos + 1; i < all.length; i += 1) {
+        const ai = all[i].key ? apiIndexOf.get(all[i].key) : null;
+        if (ai != null) {
+          hi = ai;
+          break;
+        }
+      }
+      const pool = (cands.get(it.role) || []).filter((c) => !c.taken && c.apiIdx > lo && c.apiIdx < hi);
+      if (pool.length) {
+        pool[0].taken = true;
+        assignKey(it, pool[0].key);
+      } else {
+        assignKey(it, null); // 实在没有对应关系（比如刚发出去还没进快照）：退回文本 key
+      }
+    }
+  }
+
   // 双胞胎提问（一字不差的两条「详细求解」）第二趟配对：
   // 第一趟已经把文本唯一的条目都配好了，双胞胎看「自己夹在谁和谁之间」对号 ——
   // 上面最近的已配条目在接口里的位置是下界、下面是上界，只认区间内的候选。
@@ -1632,16 +1666,25 @@
       it.key = k;
       it.idx = indexOfNode(it.el);
     };
-    // 第一趟只配文本唯一的；双胞胎（接口里同文本多条）留到第二趟按位置对号
+    // 第一趟只配文本唯一的；双胞胎（接口里同文本多条）留到第二趟按位置对号；
+    // 文本压根对不上的（回答是 Markdown 渲染的，接口给的是 ## / ** / 代码块原文）
+    // 留到第三趟按位置填 —— 否则每条回答都会多出一个 DOM 条目，目录里「答」翻倍
     const twinItems = [];
+    const textMissed = [];
     all.forEach((it) => {
       if (apiCands && it.text && apiCands.dupFull[it.role] && apiCands.dupFull[it.role].has(normMatchFull(it.text))) {
         twinItems.push(it);
         return;
       }
-      assignKey(it, apiKeyOf(apiCands, it));
+      const k = apiCands ? apiKeyOf(apiCands, it) : null;
+      if (!k && apiCands) {
+        textMissed.push(it);
+        return;
+      }
+      assignKey(it, k);
     });
     if (twinItems.length) pairTwins(apiCands, all, twinItems, assignKey);
+    if (textMissed.length) fillByPosition(apiCands, all, textMissed, assignKey);
     // 最新一条提问不在接口快照里 —— 多半是刚发出去的，安静地再拉一次
     if (apiThread) {
       const lastUser = all.length ? all.filter((x) => x.role === 'user').pop() : null;
@@ -2717,22 +2760,45 @@
     return pool[Math.min(ord, pool.length - 1)];
   }
 
+  // 目录里有没有「和它文本一模一样」的兄弟条目（双胞胎提问）。
+  // 只有这种才需要按接口序号找真身；其余条目（尤其是回答）必须信配对给的 el ——
+  // 回答是 Markdown 渲染的，接口给的是 **粗体** / 代码块 / 表格原文，
+  // 页面里是纯文本，两边指纹永远不等，硬按文本找就会满页乱滚（来回跳 + 一直闪）
+  function isTwinText(it) {
+    if (!it || !it.text) return false;
+    const full = normMatchFull(it.text);
+    if (!full) return false;
+    let n = 0;
+    for (const o of items) {
+      if (o.role !== it.role) continue;
+      if (normMatchFull(o.text || '') === full) {
+        n += 1;
+        if (n > 1) return true;
+      }
+    }
+    return false;
+  }
+
   function jumpTo(key) {
     const it = archive.get(key) || items.find((i) => i.key === key);
     if (!it) return;
-    // 拿到接口快照时，不信任配对给的 el（可能认错了双胞胎）：
-    // 按「文本 + 第几次出现」在挂载节点里找真身，找不到再滚动去找
-    if (apiThread) {
+    const connected = !!(it.el && it.el.isConnected);
+    // 双胞胎（一字不差的重复提问）：文本分不清，必须按接口序号找真身
+    if (apiThread && isTwinText(it)) {
       const hit = findMountedByText(it);
       if (hit) {
         it.el = hit.el;
         doJump(it);
         return;
       }
+      if (connected) {
+        doJump(it); // 找不到更好的就用现成的，别再满页扫
+        return;
+      }
       seekTo(it);
       return;
     }
-    if (it.el && it.el.isConnected) {
+    if (connected) {
       doJump(it);
       return;
     }
@@ -2762,8 +2828,9 @@
       if (token !== jumpSeq || activeKey !== key) return;
       const cur = archive.get(key);
       let now = (cur && cur.el && cur.el.isConnected && cur.el) || (el && el.isConnected ? el : null);
-      // 虚拟列表可能刚把这条卸载重挂过，按文本再找一次真身
-      if (cur && apiThread) {
+      // 虚拟列表可能刚把这条卸载重挂过，按文本再找一次真身。
+      // 只对双胞胎做（普通条目的文本指纹跟 Markdown 渲染对不上，找了也是白找）
+      if (cur && apiThread && isTwinText(cur)) {
         const hit = findMountedByText(cur);
         if (hit) {
           cur.el = hit.el;
@@ -2857,23 +2924,28 @@
       scan(true, true);
       // 不查「配对把 el 给了谁」，按文本在挂载节点里找真身；
       // 找到就把 el 纠正过来，后面的 doJump 和落定校准都用它
-      if (!apiThread) {
-        const cur = archive.get(it.key);
-        if (cur && cur.el && cur.el.isConnected) return cur;
+      const near = Math.abs(y - guessY) <= localRadius;
+      // 双胞胎：配对给的元素可能是另一个兄弟，按接口序号/位置找真身
+      if (apiThread && isTwinText(it)) {
+        const hit = findMountedByText(it) || (near ? findMountedByText(it, true) : null);
+        if (hit && hit.el && hit.el.isConnected) {
+          it.el = hit.el;
+          return it;
+        }
         return null;
       }
-      const hit = findMountedByText(it);
-      if (hit && hit.el && hit.el.isConnected) {
-        it.el = hit.el;
+      // 普通条目：配对给的 el 连着就认 —— 比文本稳，
+      // 回答是 Markdown 渲染的，文本指纹跟接口原文根本对不上
+      const cur = archive.get(it.key);
+      if (cur && cur.el && cur.el.isConnected) {
+        it.el = cur.el;
         return it;
       }
-      // 严格匹配没认（双胞胎挂的是另一个 / 配对还没跟上）：
-      // 只在「猜测位置附近」放宽 —— 探针已经把人滚到目标家门口了，
-      // 这条位置上的同文本消息就是目标；远处粗扫时不能放宽，不然会认错双胞胎
-      if (Math.abs(y - guessY) <= localRadius) {
-        const near = findMountedByText(it, true);
-        if (near && near.el && near.el.isConnected) {
-          it.el = near.el;
+      // 配对也没给（接口里没有这条 / 没配上）：退一步按文本找
+      if (apiThread) {
+        const hit = findMountedByText(it) || (near ? findMountedByText(it, true) : null);
+        if (hit && hit.el && hit.el.isConnected) {
+          it.el = hit.el;
           return it;
         }
       }

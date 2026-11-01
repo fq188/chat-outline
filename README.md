@@ -133,6 +133,18 @@ Elicit · SciSpace (typeset.io) · Consensus · ChatPDF · iAsk · Felo
 
 ## 更新日志 / Changelog
 
+### v1.5.3 — 点「答」不再满页乱跳 / No more wild scrolling when you click an answer
+
+v1.5.2 把所有条目的跳转都改成「按文本指纹找真身」，但**回答是 Markdown 渲染的**：接口给的是 `## 结论`、`**加粗**`、代码块、公式原文，页面里是渲染后的纯文本，两边指纹永远不相等。于是点「答」条目时严格匹配失败，退化成整页探测滚动 —— 看起来就是「来回跳、一闪一闪」。副作用是每条回答都多出一个对不上的 DOM 条目，目录里的「答」翻倍。
+
+**修复 / Fixes**
+
+| 中文 | English |
+| --- | --- |
+| **跳转改回「元素优先」**：只有一字不差的重复提问（双胞胎）才按接口序号找真身；普通条目直接信任配对给的元素。文本指纹不再参与普通跳转 | **Jumps trust the paired element again**: only exact-duplicate questions (twins) are located by API index; everything else uses the paired node. Text fingerprints no longer drive normal jumps |
+| **回答按位置补配**：文本对不上（Markdown 渲染差异）的条目，按「夹在两条已配好的消息之间、同角色只剩一个候选」补上 —— 回答条目不再翻倍，也不再有对不上的孤儿条目 | **Answers paired by position**: rows whose text can't match (Markdown rendering differences) are matched by "the only remaining candidate of that role between two already-paired neighbours" — no more doubled answer rows or orphan entries |
+| **落定校准只对双胞胎复查文本**，普通条目不再被误判成「位置不对」而二次闪一下 | **Post-scroll re-check only re-matches twins**; normal rows are no longer flagged as "off target" and flashed twice |
+
 ### v1.5.2 — 适配新版 ChatGPT UI / New ChatGPT UI support
 
 ChatGPT 前端改版后，每条消息前面多了看得见的「你说：」「ChatGPT 说：」标签，带附件的提问还会把附件卡片（文件名 + PDF 徽标）混进消息文本 —— 页面上的「HW_07.pdfPDFLec 16…pdfPDF详细求解」和接口给的干净文本「详细求解」对不上，目录里同一问出现两次、日期分组来回漂、点旧条目跳不到地方。另外真实对话里确实存在一字不差的重复提问（两条「详细求解」），单靠文本永远分不清谁是谁。
@@ -426,6 +438,7 @@ node test-v132.js   # 新提问必须落在目录末尾（追加 / 切分支 / �
 node test-v150.js   # 快速通道：一次请求拿全目录，接口失败要退回滚动补扫
 node test-v151.js   # 点目录要跳到「那一条」：开头雷同的 20 轮追问，逐一核对落点
 node test-v152.js   # 新版 ChatGPT UI：附件卡片/「你说：」标签清洗 + 一字不差的双胞胎提问消歧
+node test-v153.js   # 点「答」条目：Markdown 渲染差异不能让页面满页乱滚/反复闪
 node e2e-real.js    # 用 --load-extension 加载整份扩展，在仿真 ChatGPT 页上跑一遍
 node e2e.js         # 以 --load-extension 真实加载扩展跑一遍
 ```
